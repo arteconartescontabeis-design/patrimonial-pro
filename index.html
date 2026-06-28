@@ -201,6 +201,17 @@ const MODULOS = [
   ['portal','Portal do Sócio'],['contratos','Contratos e Passivos'],['admin','Administração']
 ];
 
+// Tipos de usuário (papel) — rótulos amigáveis
+const ROLE_LABEL = { admin:'Administrador', operador:'Usuário local', externo:'Usuário externo', consulta:'Consulta' };
+const ROLE_OPCOES = [['admin','Administrador'],['operador','Usuário local'],['externo','Usuário externo']];
+
+// Modelos de permissão por tipo (preenchem a matriz). Recebe id do módulo, retorna {ver,criar,editar,excluir}
+const PERM_MODELO = {
+  admin:    () => ({ver:true, criar:true, editar:true, excluir:true}),
+  operador: m  => ({ver:true, criar:(m!=='admin'), editar:(m!=='admin'), excluir:false}),
+  externo:  m  => ({ver:['bi','portal','patrimonio'].includes(m), criar:false, editar:false, excluir:false})
+};
+
 // Estado da sessão
 const ctx = { user:null, perfil:null, superadmin:false, tenants:[], tenantId:null, role:null };
 
@@ -420,37 +431,79 @@ async function telaUsuarios(){
   const c = $('#content');
   const empNome = ctx.tenants.find(t=>t.id===ctx.tenantId)?.nome || '';
   c.innerHTML = `<div class="page-head"><div><h1>Usuários</h1><p>Acessos da empresa <b>${esc(empNome)}</b>.</p></div>
-    <button class="btn btn-primary" id="addUser">+ Vincular usuário</button></div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-ghost" id="vincUser">Vincular existente</button>
+      <button class="btn btn-primary" id="novoUser">+ Novo usuário</button>
+    </div></div>
     <div class="card" id="userCard"><div class="skeleton">Carregando…</div></div>`;
-  $('#addUser').onclick=()=>formUsuario();
+  $('#novoUser').onclick=()=>formNovoUsuario();
+  $('#vincUser').onclick=()=>formUsuario();
 
   const { data, error } = await sb.from('pat_usuarios_empresas')
-    .select('usuario_id, role, ativo, pat_usuarios(nome,email,ativo)')
+    .select('usuario_id, role, ativo, pat_usuarios(nome,email,telefone,cargo,ativo)')
     .eq('tenant_id', ctx.tenantId).order('role');
   if(error){ $('#userCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
-  if(!data.length){ $('#userCard').innerHTML=`<div class="empty"><b>Nenhum usuário</b>Vincule o primeiro usuário a esta empresa.</div>`; return; }
-  $('#userCard').innerHTML=`<table><thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Status</th><th></th></tr></thead><tbody>
+  if(!data.length){ $('#userCard').innerHTML=`<div class="empty"><b>Nenhum usuário</b>Crie o primeiro usuário desta empresa.</div>`; return; }
+  $('#userCard').innerHTML=`<table><thead><tr><th>Nome</th><th>E-mail</th><th>Cargo</th><th>Tipo</th><th>Status</th><th></th></tr></thead><tbody>
     ${data.map(u=>`<tr>
       <td><b>${esc(u.pat_usuarios?.nome)}</b></td><td>${esc(u.pat_usuarios?.email)}</td>
-      <td><span class="badge role">${esc(u.role)}</span></td>
+      <td>${esc(u.pat_usuarios?.cargo)||'—'}</td>
+      <td><span class="badge role">${esc(ROLE_LABEL[u.role]||u.role)}</span></td>
       <td><span class="badge ${u.ativo?'ativo':'inativo'}">${u.ativo?'Ativo':'Inativo'}</span></td>
       <td><div class="row-actions">
-        <button class="btn btn-sm btn-ghost" onclick='formUsuario(${JSON.stringify({usuario_id:u.usuario_id,role:u.role,nome:u.pat_usuarios?.nome,email:u.pat_usuarios?.email})})'>Editar papel</button>
+        <button class="btn btn-sm btn-ghost" onclick='formUsuario(${JSON.stringify({usuario_id:u.usuario_id,role:u.role,nome:u.pat_usuarios?.nome,email:u.pat_usuarios?.email})})'>Tipo</button>
         <button class="btn btn-sm btn-ghost btn-danger" onclick="toggleUsuario('${u.usuario_id}',${u.ativo})">${u.ativo?'Remover acesso':'Reativar'}</button>
       </div></td></tr>`).join('')}
   </tbody></table>`;
 }
 
+// Criar usuário completo (conta de acesso + perfil + vínculo) via função SQL
+function formNovoUsuario(){
+  openModal(`<div class="modal-head"><h2>Novo usuário</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Nome completo *</label><input id="n_nome" placeholder="Nome e sobrenome"></div>
+      <div class="grid2">
+        <div class="field"><label>E-mail *</label><input id="n_email" type="email" placeholder="pessoa@empresa.com"></div>
+        <div class="field"><label>Telefone</label><input id="n_tel" placeholder="(48) 9 ____-____"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Cargo / função</label><input id="n_cargo" placeholder="ex.: Contadora"></div>
+        <div class="field"><label>Tipo de usuário *</label><select id="n_role">
+          ${ROLE_OPCOES.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}
+        </select></div>
+      </div>
+      <div class="field"><label>Senha de acesso *</label><input id="n_senha" type="text" placeholder="mínimo 6 caracteres">
+        <p style="font-size:12.5px;color:var(--texto-3);margin-top:6px">A pessoa entra com este e-mail e senha. Você pode informar a senha a ela depois.</p></div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="salvarNovo">Criar usuário</button></div>`);
+  $('#salvarNovo').onclick = async ()=>{
+    const p = {
+      p_nome:$('#n_nome').value.trim(), p_email:$('#n_email').value.trim().toLowerCase(),
+      p_telefone:$('#n_tel').value.trim()||null, p_cargo:$('#n_cargo').value.trim()||null,
+      p_senha:$('#n_senha').value, p_role:$('#n_role').value, p_tenant:ctx.tenantId
+    };
+    if(!p.p_nome||!p.p_email||!p.p_senha){ toast('Preencha nome, e-mail e senha.', true); return; }
+    if(p.p_senha.length<6){ toast('A senha precisa de ao menos 6 caracteres.', true); return; }
+    const btn=$('#salvarNovo'); btn.disabled=true; btn.innerHTML='<span class="loader"></span> Criando…';
+    const { error } = await sb.rpc('pat_admin_criar_usuario', p);
+    btn.disabled=false; btn.textContent='Criar usuário';
+    if(error){ toast(error.message, true); return; }
+    toast('Usuário criado'); closeModal(); telaUsuarios();
+  };
+}
+
+// Vincular usuário já existente / editar tipo
 function formUsuario(u){
   u = u || {};
   const ed = !!u.usuario_id;
-  openModal(`<div class="modal-head"><h2>${ed?'Editar papel':'Vincular usuário'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+  openModal(`<div class="modal-head"><h2>${ed?'Tipo de usuário':'Vincular usuário existente'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
     <div class="modal-body">
       ${ed?`<div class="field"><label>Usuário</label><input value="${esc(u.nome)} · ${esc(u.email)}" disabled></div>`
           :`<div class="field"><label>E-mail do usuário *</label><input id="u_email" type="email" placeholder="pessoa@empresa.com">
-            <p style="font-size:12.5px;color:var(--texto-3);margin-top:6px">O usuário precisa já ter conta de acesso (Auth). O vínculo concede acesso a esta empresa.</p></div>`}
-      <div class="field"><label>Papel nesta empresa *</label><select id="u_role">
-        ${['admin','operador','consulta'].map(r=>`<option value="${r}" ${u.role===r?'selected':''} style="text-transform:capitalize">${r}</option>`).join('')}
+            <p style="font-size:12.5px;color:var(--texto-3);margin-top:6px">Para alguém que já tem conta. Para criar do zero, use “Novo usuário”.</p></div>`}
+      <div class="field"><label>Tipo nesta empresa *</label><select id="u_role">
+        ${ROLE_OPCOES.map(([v,l])=>`<option value="${v}" ${u.role===v?'selected':''}>${l}</option>`).join('')}
       </select></div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
@@ -467,12 +520,12 @@ function formUsuario(u){
         const email=$('#u_email').value.trim().toLowerCase();
         if(!email){ throw new Error('Informe o e-mail.'); }
         const { data: pu } = await sb.from('pat_usuarios').select('id').eq('email', email).maybeSingle();
-        if(!pu) throw new Error('Não há usuário com esse e-mail. Peça que ele crie a conta de acesso primeiro.');
+        if(!pu) throw new Error('Não há usuário com esse e-mail. Use “Novo usuário” para criar.');
         const { error } = await sb.from('pat_usuarios_empresas')
           .upsert({ usuario_id: pu.id, tenant_id: ctx.tenantId, role, ativo:true }, { onConflict:'usuario_id,tenant_id' });
         if(error) throw error;
       }
-      toast(ed?'Papel atualizado':'Usuário vinculado'); closeModal(); telaUsuarios();
+      toast(ed?'Tipo atualizado':'Usuário vinculado'); closeModal(); telaUsuarios();
     }catch(e){ toast(e.message, true); }
     finally{ btn.disabled=false; btn.textContent='Salvar'; }
   };
@@ -492,13 +545,13 @@ async function telaAcessos(){
   c.innerHTML=`<div class="page-head"><div><h1>Acessos</h1><p>Permissões detalhadas por usuário e módulo.</p></div></div>
     <div class="perm-tools"><label style="font-weight:600;color:var(--texto-2)">Usuário:</label>
       <select id="permUser"><option value="">Selecione…</option></select></div>
-    <div class="perm-note">Vazio = o usuário herda as permissões padrão do seu papel (admin: tudo; operador: ver/criar/editar; consulta: só ver). Marque para conceder permissão específica por módulo.</div>
+    <div class="perm-note">Vazio = o usuário herda o padrão do seu tipo (Administrador: tudo; Usuário local: ver/criar/editar; Usuário externo: só ver). Use os modelos ou marque manualmente para personalizar.</div>
     <div class="card" id="permCard"><div class="empty">Selecione um usuário para configurar os acessos.</div></div>`;
 
   const { data } = await sb.from('pat_usuarios_empresas')
     .select('usuario_id, role, pat_usuarios(nome,email)').eq('tenant_id', ctx.tenantId).eq('ativo',true);
   const sel=$('#permUser');
-  sel.innerHTML += (data||[]).map(u=>`<option value="${u.usuario_id}">${esc(u.pat_usuarios?.nome)} (${esc(u.role)})</option>`).join('');
+  sel.innerHTML += (data||[]).map(u=>`<option value="${u.usuario_id}">${esc(u.pat_usuarios?.nome)} — ${esc(ROLE_LABEL[u.role]||u.role)}</option>`).join('');
   sel.onchange = ()=> sel.value ? matrizPermissoes(sel.value) : ($('#permCard').innerHTML='<div class="empty">Selecione um usuário.</div>');
 }
 
@@ -507,19 +560,54 @@ async function matrizPermissoes(uid){
   const { data } = await sb.from('pat_permissoes').select('*').eq('usuario_id', uid).eq('tenant_id', ctx.tenantId);
   const map={}; (data||[]).forEach(p=>map[p.modulo]=p);
   const acoes=['ver','criar','editar','excluir'];
-  card.innerHTML=`<table class="perm-table"><thead><tr><th class="mod" style="text-align:left">Módulo</th>
-    ${acoes.map(a=>`<th style="text-align:center;text-transform:capitalize">${a}</th>`).join('')}</tr></thead><tbody>
+  card.innerHTML=`
+  <div style="padding:14px 18px;border-bottom:1px solid var(--linha);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:13px;font-weight:600;color:var(--texto-2)">Aplicar modelo:</span>
+    <button class="btn btn-sm btn-ghost" data-modelo="admin">Administrador</button>
+    <button class="btn btn-sm btn-ghost" data-modelo="operador">Usuário local</button>
+    <button class="btn btn-sm btn-ghost" data-modelo="externo">Usuário externo</button>
+    <span style="flex:1"></span>
+    <button class="btn btn-sm btn-ghost" id="selTudo">Selecionar tudo</button>
+    <button class="btn btn-sm btn-ghost" id="limparTudo">Limpar tudo</button>
+  </div>
+  <table class="perm-table"><thead><tr><th class="mod" style="text-align:left">Módulo</th>
+    ${acoes.map(a=>`<th style="text-align:center;text-transform:capitalize;cursor:pointer" data-col="pode_${a}" title="Marcar/limpar coluna">${a}</th>`).join('')}</tr></thead><tbody>
     ${MODULOS.map(([id,nome])=>{ const p=map[id]||{};
-      return `<tr><td class="mod">${nome}</td>
+      return `<tr><td class="mod" data-rowmod="${id}" style="cursor:pointer" title="Marcar/limpar linha">${nome}</td>
         ${acoes.map(a=>{ const key='pode_'+a;
           return `<td><input type="checkbox" data-mod="${id}" data-acao="${key}" ${p[key]?'checked':''}></td>`;}).join('')}
       </tr>`;}).join('')}
   </tbody></table>
   <div class="modal-foot" style="border-top:1px solid var(--linha)"><button class="btn btn-primary" id="savePerm">Salvar permissões</button></div>`;
 
+  const cbs = ()=> card.querySelectorAll('input[type=checkbox]');
+  // selecionar / limpar tudo
+  $('#selTudo').onclick = ()=> cbs().forEach(cb=>cb.checked=true);
+  $('#limparTudo').onclick = ()=> cbs().forEach(cb=>cb.checked=false);
+  // toggle por coluna
+  card.querySelectorAll('th[data-col]').forEach(th=>th.onclick=()=>{
+    const key=th.dataset.col; const alvo=[...cbs()].filter(cb=>cb.dataset.acao===key);
+    const todos=alvo.every(cb=>cb.checked); alvo.forEach(cb=>cb.checked=!todos);
+  });
+  // toggle por linha
+  card.querySelectorAll('td[data-rowmod]').forEach(td=>td.onclick=()=>{
+    const m=td.dataset.rowmod; const alvo=[...cbs()].filter(cb=>cb.dataset.mod===m);
+    const todos=alvo.every(cb=>cb.checked); alvo.forEach(cb=>cb.checked=!todos);
+  });
+  // modelos por tipo
+  card.querySelectorAll('button[data-modelo]').forEach(btn=>btn.onclick=()=>{
+    const modelo=PERM_MODELO[btn.dataset.modelo];
+    MODULOS.forEach(([id])=>{ const r=modelo(id);
+      ['ver','criar','editar','excluir'].forEach(a=>{
+        const cb=card.querySelector(`input[data-mod="${id}"][data-acao="pode_${a}"]`); if(cb) cb.checked=!!r[a];
+      });
+    });
+    toast('Modelo aplicado — revise e salve');
+  });
+
   $('#savePerm').onclick = async ()=>{
     const rows={};
-    card.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+    cbs().forEach(cb=>{
       const m=cb.dataset.mod; rows[m]=rows[m]||{ usuario_id:uid, tenant_id:ctx.tenantId, modulo:m,
         pode_ver:false,pode_criar:false,pode_editar:false,pode_excluir:false };
       rows[m][cb.dataset.acao]=cb.checked;
@@ -535,11 +623,11 @@ async function matrizPermissoes(uid){
 
 // expõe handlers usados em onclick inline
 window.formEmpresa=formEmpresa; window.toggleEmpresa=toggleEmpresa;
-window.formUsuario=formUsuario; window.toggleUsuario=toggleUsuario;
+window.formUsuario=formUsuario; window.formNovoUsuario=formNovoUsuario; window.toggleUsuario=toggleUsuario;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell Fase 0 · build 2026.06');
+console.log('Patrimonial Artecon — app-shell Fase 0 · build 2026.06b');
 </script>
 </body>
 </html>
