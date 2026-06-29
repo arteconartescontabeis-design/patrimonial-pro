@@ -203,7 +203,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
       <button class="btn btn-primary" id="btnLogin">Entrar</button>
-      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.16b</p>
+      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.16c</p>
     </div>
   </div>
 </div>
@@ -391,15 +391,21 @@ async function entrar(){
     }
     iniciarApp();
   }catch(e){
-    erro.textContent = traduzErro(e.message); erro.style.display='block';
+    const msg = (e && (e.message || e.error_description || e.msg)) || '';
+    erro.textContent = traduzErro(msg, e); erro.style.display='block';
   }finally{
     btn.disabled=false; btn.textContent='Entrar';
   }
 }
 
-function traduzErro(m){
+function traduzErro(m, e){
+  m = (m||'').toString();
   if(/Invalid login/i.test(m)) return 'E-mail ou senha incorretos.';
   if(/Email not confirmed/i.test(m)) return 'E-mail ainda não confirmado.';
+  const status = e && (e.status || e.code);
+  if(status===500 || /Database error|unexpected_failure|converting NULL|internal/i.test(m))
+    return 'Erro no servidor de autenticação (500). Avise o administrador — provável ajuste pendente no cadastro do usuário.';
+  if(/Failed to fetch|NetworkError|network/i.test(m)) return 'Falha de conexão. Verifique a internet e tente novamente.';
   return m || 'Não foi possível entrar.';
 }
 
@@ -2406,7 +2412,7 @@ window.aplicarDoacao=aplicarDoacao; window.addConjuge=addConjuge; window.audDeta
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.16b (Análise % Capital como módulo próprio)');
+console.log('Patrimonial Artecon — app-shell · build 2026.16c (mensagem de erro no login + Análise % Capital)');
 </script>
 </body>
 </html>
