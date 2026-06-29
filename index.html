@@ -112,6 +112,26 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .bar-track{flex:1;background:#eef2f6;border-radius:6px;height:22px;overflow:hidden;min-width:60px}
 .bar-fill{height:100%;background:linear-gradient(90deg,var(--azul-cla),var(--azul));border-radius:6px}
 .bar-val{width:140px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;font-size:13.5px;color:var(--azul-esc);flex-shrink:0}
+.hero{background:linear-gradient(135deg,#0b2535 0%,var(--azul-esc) 52%,#1d6498 100%);border-radius:18px;padding:30px 32px;color:#fff;position:relative;overflow:hidden;box-shadow:0 10px 40px rgba(20,40,60,.25)}
+.hero::after{content:'';position:absolute;right:-70px;top:-70px;width:280px;height:280px;background:radial-gradient(circle,rgba(95,208,232,.35),transparent 70%);border-radius:50%}
+.hero::before{content:'';position:absolute;left:-40px;bottom:-90px;width:240px;height:240px;background:radial-gradient(circle,rgba(41,128,185,.30),transparent 70%);border-radius:50%}
+.hero h2{color:#fff;font-size:23px;margin-bottom:3px;position:relative;z-index:1}
+.hero .sub{color:#bcd9ec;font-size:13.5px;position:relative;z-index:1}
+.hero-kpis{display:flex;gap:26px;flex-wrap:wrap;margin-top:24px;position:relative;z-index:1}
+.hero-kpi{flex:1;min-width:150px}
+.hero-kpi .lab{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:#8fc0dc;font-weight:700}
+.hero-kpi .val{font-size:27px;font-weight:800;margin-top:6px;font-variant-numeric:tabular-nums;color:#fff;line-height:1.1}
+.hero-kpi .val.accent{color:#5fd0e8}
+.hero-kpi .val.warn{color:#ffce6b}
+.emp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px;margin-top:20px}
+.emp-card{background:var(--surface);border:1px solid var(--linha);border-radius:14px;padding:18px;box-shadow:var(--sombra)}
+.emp-card h3{font-size:16px;margin-bottom:12px}
+.emp-row{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:13.5px}
+.emp-row .k{color:var(--texto-2)} .emp-row .v{font-weight:700;font-variant-numeric:tabular-nums;color:var(--azul-esc)}
+.emp-row .v.warn{color:var(--aviso)}
+.emp-prog{height:8px;background:#eef2f6;border-radius:6px;overflow:hidden;margin-top:10px}
+.emp-prog .fill{height:100%;background:linear-gradient(90deg,#2980b9,#5fd0e8);border-radius:6px}
+.emp-prog-lab{font-size:11.5px;color:var(--texto-3);margin-top:5px;text-align:right}
 
 /* ---------- Modal ---------- */
 .modal-bg{position:fixed;inset:0;background:rgba(15,30,45,.45);display:none;place-items:center;z-index:40;padding:20px;backdrop-filter:blur(2px)}
@@ -169,7 +189,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
     <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button class="btn btn-primary" id="btnLogin">Entrar</button>
-    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.12a</p>
+    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.13a</p>
   </div>
 </div>
 
@@ -191,17 +211,23 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 
   <div class="shell">
     <aside class="sidebar" id="sidebar">
-      <div class="nav-label">Cadastros</div>
+      <button class="nav-item" data-route="inicio" data-modulo="inicio"><span class="ic">&#127968;</span> Início</button>
+
+      <div class="nav-label" style="margin-top:14px">Cadastro</div>
       <button class="nav-item" data-route="pessoas" data-modulo="pessoas"><span class="ic">&#128101;</span> Pessoas</button>
+      <button class="nav-item" data-route="empresas" data-modulo="admin"><span class="ic">&#127970;</span> Empresas</button>
+
+      <div class="nav-label" style="margin-top:14px">Núcleo operacional</div>
       <button class="nav-item" data-route="ativos" data-modulo="patrimonio"><span class="ic">&#128188;</span> Ativos</button>
       <button class="nav-item" data-route="societario" data-modulo="societario"><span class="ic">&#128202;</span> Societária</button>
       <button class="nav-item" data-route="onus" data-modulo="onus"><span class="ic">&#128274;</span> Ônus e Direitos</button>
       <button class="nav-item" data-route="vencimentos" data-modulo="vencimentos"><span class="ic">&#128197;</span> Vencimentos</button>
       <button class="nav-item" data-route="ged" data-modulo="ged"><span class="ic">&#128193;</span> Documentos</button>
+
       <div class="nav-label" style="margin-top:14px">Painéis</div>
       <button class="nav-item" data-route="bi" data-modulo="bi"><span class="ic">&#128200;</span> BI / Relatórios</button>
+
       <div class="nav-label" style="margin-top:14px">Administração</div>
-      <button class="nav-item" data-route="empresas" data-modulo="admin"><span class="ic">&#127970;</span> Empresas</button>
       <button class="nav-item" data-route="usuarios" data-modulo="admin"><span class="ic">&#128100;</span> Usuários</button>
       <button class="nav-item" data-route="acessos" data-modulo="admin"><span class="ic">&#128273;</span> Acessos</button>
     </aside>
@@ -275,7 +301,7 @@ function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
 
 // ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
 // rota -> módulo. Administração exige admin; demais telas usam a matriz.
-const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', bi:'bi' };
+const ROUTE_MOD = { inicio:'inicio', empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', bi:'bi' };
 
 async function carregarPermissoes(tenantId){
   ctx.perms = {};
@@ -298,6 +324,7 @@ function pode(modulo, acao){
 }
 
 function podeRota(r){
+  if(r==='inicio') return true;
   const mod = ROUTE_MOD[r] || 'admin';
   return mod === 'admin' ? podeAdmin() : pode(mod, 'ver');
 }
@@ -410,7 +437,7 @@ function aplicarPermissoes(){
   // nav: administração exige admin; demais módulos seguem a matriz (pode)
   document.querySelectorAll('.nav-item').forEach(n=>{
     const mod = n.dataset.modulo;
-    const visivel = (mod === 'admin') ? podeAdmin() : pode(mod, 'ver');
+    const visivel = mod==='inicio' ? true : (mod === 'admin') ? podeAdmin() : pode(mod, 'ver');
     n.classList.toggle('hidden', !visivel);
   });
   aplicarPermBotoes(document);
@@ -427,10 +454,11 @@ document.querySelectorAll('.nav-item').forEach(n=>{
 window.addEventListener('hashchange', rota);
 
 function rota(){
-  const r = (location.hash.replace('#','') || primeiraRotaVisivel() || '');
+  const r = (location.hash.replace('#','') || 'inicio');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.route===r));
   if(!r || !podeRota(r)){ return semAcesso(); }
-  if(r==='empresas') telaEmpresas();
+  if(r==='inicio') telaInicio();
+  else if(r==='empresas') telaEmpresas();
   else if(r==='usuarios') telaUsuarios();
   else if(r==='acessos') telaAcessos();
   else if(r==='pessoas') telaPessoas();
@@ -1725,6 +1753,61 @@ async function inativarDoc(id){
 }
 
 // ============================================================
+// 2.0 INÍCIO  (dashboard multi-empresa — sempre acessível)
+// ============================================================
+async function telaInicio(){
+  const c=$('#content');
+  c.innerHTML=`<div id="inicioBody"><div class="hero"><div class="skeleton" style="background:rgba(255,255,255,.15)">Carregando panorama…</div></div></div>`;
+  // dados de todas as empresas acessíveis (RLS filtra o que o usuário pode ver)
+  const [tR,aR,prR] = await Promise.all([
+    sb.from('pat_tenants').select('id,nome,ativo').eq('ativo',true).order('nome'),
+    sb.from('pat_ativos').select('tenant_id,valor_atual,valor_integralizacao').eq('ativo',true),
+    sb.from('pat_participacoes').select('tenant_id,valor_nominal').eq('ativo',true)
+  ]);
+  const empresas=tR.data||[], ativos=aR.data||[], parts=prR.data||[];
+
+  const stat={}; // tenant_id -> {capital, integralizado, patrimonio, nAtivos}
+  empresas.forEach(e=>{ stat[e.id]={nome:e.nome, capital:0, integralizado:0, patrimonio:0, nAtivos:0}; });
+  ativos.forEach(a=>{ const s=stat[a.tenant_id]; if(!s) return;
+    s.integralizado += Number(a.valor_integralizacao)||0;
+    s.patrimonio    += Number(a.valor_atual)||0; s.nAtivos++; });
+  parts.forEach(p=>{ const s=stat[p.tenant_id]; if(!s) return; s.capital += Number(p.valor_nominal)||0; });
+
+  const lista=Object.values(stat);
+  const totCapital=lista.reduce((x,s)=>x+s.capital,0);
+  const totIntegr =lista.reduce((x,s)=>x+s.integralizado,0);
+  const totFalta  =lista.reduce((x,s)=>x+Math.max(0, s.capital-s.integralizado),0);
+  const totPatr   =lista.reduce((x,s)=>x+s.patrimonio,0);
+
+  $('#inicioBody').innerHTML=`
+    <div class="hero">
+      <h2>Patrimonial Pro · Painel da Holding</h2>
+      <div class="sub">Visão consolidada das empresas e da integralização do capital.</div>
+      <div class="hero-kpis">
+        <div class="hero-kpi"><div class="lab">Empresas</div><div class="val accent">${empresas.length}</div></div>
+        <div class="hero-kpi"><div class="lab">Capital subscrito</div><div class="val">${fmtMoeda(totCapital)}</div></div>
+        <div class="hero-kpi"><div class="lab">Integralizado</div><div class="val accent">${fmtMoeda(totIntegr)}</div></div>
+        <div class="hero-kpi"><div class="lab">A integralizar</div><div class="val warn">${fmtMoeda(totFalta)}</div></div>
+        <div class="hero-kpi"><div class="lab">Patrimônio total</div><div class="val">${fmtMoeda(totPatr)}</div></div>
+      </div>
+    </div>
+
+    ${empresas.length? `<div class="emp-grid">${lista.map(s=>{
+      const falta=Math.max(0, s.capital-s.integralizado);
+      const pct = s.capital>0 ? Math.min(100, s.integralizado/s.capital*100) : (s.integralizado>0?100:0);
+      return `<div class="emp-card">
+        <h3>${esc(s.nome)}</h3>
+        <div class="emp-row"><span class="k">Capital subscrito</span><span class="v">${fmtMoeda(s.capital)}</span></div>
+        <div class="emp-row"><span class="k">Integralizado</span><span class="v">${fmtMoeda(s.integralizado)}</span></div>
+        <div class="emp-row"><span class="k">A integralizar</span><span class="v ${falta>0.01?'warn':''}">${fmtMoeda(falta)}</span></div>
+        <div class="emp-row"><span class="k">Ativos · patrimônio</span><span class="v">${s.nAtivos} · ${fmtMoeda(s.patrimonio)}</span></div>
+        <div class="emp-prog"><div class="fill" style="width:${pct}%"></div></div>
+        <div class="emp-prog-lab">${pct.toLocaleString('pt-BR',{maximumFractionDigits:1})}% integralizado</div>
+      </div>`;}).join('')}</div>`
+    : `<div class="card" style="margin-top:18px"><div class="empty"><b>Nenhuma empresa visível</b>Cadastre empresas em Cadastro → Empresas.</div></div>`}`;
+}
+
+// ============================================================
 // 2.7 BI / RELATÓRIOS  (módulo 'bi') — painel consolidado (somente leitura)
 // ============================================================
 async function telaBI(){
@@ -1818,7 +1901,7 @@ window.baixarDoc=baixarDoc; window.inativarDoc=inativarDoc;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.12a (Fase 6: BI / Relatórios)');
+console.log('Patrimonial Artecon — app-shell · build 2026.13a (Início + reorganização do menu)');
 </script>
 </body>
 </html>
