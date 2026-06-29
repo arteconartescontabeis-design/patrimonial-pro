@@ -142,6 +142,10 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .emp-prog{height:8px;background:#eef2f6;border-radius:6px;overflow:hidden;margin-top:10px}
 .emp-prog .fill{height:100%;background:linear-gradient(90deg,#2980b9,#5fd0e8);border-radius:6px}
 .emp-prog-lab{font-size:11.5px;color:var(--texto-3);margin-top:5px;text-align:right}
+.tabs{display:flex;gap:2px;border-bottom:2px solid var(--linha);margin-bottom:18px;flex-wrap:wrap}
+.tab{background:none;border:none;padding:10px 16px;font-size:14px;font-weight:600;color:var(--texto-2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px}
+.tab.active{color:var(--azul);border-bottom-color:var(--azul)}
+.tab:hover{color:var(--azul-esc)}
 
 /* ---------- Modal ---------- */
 .modal-bg{position:fixed;inset:0;background:rgba(15,30,45,.45);display:none;place-items:center;z-index:40;padding:20px;backdrop-filter:blur(2px)}
@@ -199,7 +203,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
       <button class="btn btn-primary" id="btnLogin">Entrar</button>
-      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.14b</p>
+      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.15a</p>
     </div>
   </div>
 </div>
@@ -234,6 +238,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <button class="nav-item" data-route="onus" data-modulo="onus"><span class="ic">&#128274;</span> Ônus e Direitos</button>
       <button class="nav-item" data-route="vencimentos" data-modulo="vencimentos"><span class="ic">&#128197;</span> Vencimentos</button>
       <button class="nav-item" data-route="ged" data-modulo="ged"><span class="ic">&#128193;</span> Documentos</button>
+      <button class="nav-item" data-route="sucessorio" data-modulo="sucessorio"><span class="ic">&#128220;</span> Sucessório</button>
 
       <div class="nav-label" style="margin-top:14px">Painéis</div>
       <button class="nav-item" data-route="bi" data-modulo="bi"><span class="ic">&#128200;</span> BI / Relatórios</button>
@@ -294,6 +299,8 @@ const CATEGORIA_VENC_MAP = Object.fromEntries(CATEGORIA_VENC);
 const RECORRENCIA = [['unica','Única'],['mensal','Mensal'],['trimestral','Trimestral'],['semestral','Semestral'],['anual','Anual']];
 const STATUS_VENC = [['pendente','Pendente'],['cumprido','Cumprido'],['cancelado','Cancelado']];
 const STATUS_VENC_MAP = Object.fromEntries(STATUS_VENC);
+const TIPO_VINCULO = [['descendente','Descendente'],['ascendente','Ascendente'],['conjuge','Cônjuge'],['companheiro','Companheiro(a)'],['colateral','Colateral'],['outro','Outro']];
+const TIPO_VINCULO_MAP = Object.fromEntries(TIPO_VINCULO);
 
 // Estado da sessão
 const ctx = { user:null, perfil:null, superadmin:false, tenants:[], tenantId:null, role:null, perms:{} };
@@ -314,7 +321,7 @@ function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
 
 // ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
 // rota -> módulo. Administração exige admin; demais telas usam a matriz.
-const ROUTE_MOD = { inicio:'inicio', empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', bi:'bi' };
+const ROUTE_MOD = { inicio:'inicio', empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', sucessorio:'sucessorio', bi:'bi' };
 
 async function carregarPermissoes(tenantId){
   ctx.perms = {};
@@ -480,6 +487,7 @@ function rota(){
   else if(r==='onus') telaOnus();
   else if(r==='vencimentos') telaVencimentos();
   else if(r==='ged') telaGED();
+  else if(r==='sucessorio') telaSucessorio();
   else if(r==='bi') telaBI();
   else semAcesso();
 }
@@ -1903,6 +1911,323 @@ async function telaBI(){
     </div>`;
 }
 
+// ============================================================
+// 2.8 PLANEJAMENTO SUCESSÓRIO  (módulo 'sucessorio')
+// ============================================================
+let _sucTab='herdeiros';
+let _pessoasSuc=[];
+let _sucTitular=null, _vincCache=[];
+let _doacoesCache=[], _itcmdMap={};
+let _itcmdCache=[];
+let _sucAutor=null;
+
+function pessoaOpts(sel, exclude){ return _pessoasSuc.filter(p=>p.id!==exclude).map(p=>`<option value="${p.id}" ${sel===p.id?'selected':''}>${esc(p.nome)} (${esc(p.tipo_pessoa)})</option>`).join(''); }
+
+async function telaSucessorio(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>Planejamento Sucessório</h1><p>Herdeiros, doações em vida, simulação de partilha e ITCMD.</p></div></div>
+    <div class="tabs">${[['herdeiros','Herdeiros'],['doacoes','Doações em vida'],['simulador','Simulador de partilha'],['itcmd','ITCMD por UF']].map(([k,l])=>`<button class="tab ${_sucTab===k?'active':''}" data-tab="${k}">${l}</button>`).join('')}</div>
+    <div id="sucBody"><div class="card"><div class="skeleton">Carregando…</div></div></div>`;
+  c.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{ _sucTab=b.dataset.tab; telaSucessorio(); });
+  const { data } = await sb.from('pat_pessoas').select('id,nome,tipo_pessoa,regime_bens,conjuge_id,ativo').eq('tenant_id',ctx.tenantId).order('nome');
+  _pessoasSuc=(data||[]).filter(x=>x.ativo!==false);
+  if(_sucTab==='herdeiros') sucHerdeiros();
+  else if(_sucTab==='doacoes') sucDoacoes();
+  else if(_sucTab==='simulador') sucSimulador();
+  else sucITCMD();
+}
+
+// ---- aba Herdeiros ----
+function sucHerdeiros(){
+  const b=$('#sucBody');
+  b.innerHTML=`<div class="perm-tools">
+      <label style="font-weight:600;color:var(--texto-2)">Titular:</label>
+      <select id="hTit"><option value="">Selecione a pessoa…</option>${_pessoasSuc.map(p=>`<option value="${p.id}" ${_sucTitular===p.id?'selected':''}>${esc(p.nome)}</option>`).join('')}</select>
+      <span style="flex:1"></span>
+      <button class="btn btn-primary" data-perm="sucessorio:criar" id="hAdd" ${_sucTitular?'':'disabled'}>+ Adicionar vínculo</button>
+    </div>
+    <div class="card" id="hCard"><div class="empty">Selecione um titular para ver/editar herdeiros e familiares.</div></div>`;
+  aplicarPermBotoes(b);
+  $('#hTit').onchange=()=>{ _sucTitular=$('#hTit').value||null; $('#hAdd').disabled=!_sucTitular; _sucTitular?carregarVinc():($('#hCard').innerHTML='<div class="empty">Selecione um titular.</div>'); };
+  $('#hAdd').onclick=()=>_sucTitular&&formVinculo();
+  if(_sucTitular) carregarVinc();
+}
+async function carregarVinc(){
+  const card=$('#hCard'); card.innerHTML='<div class="skeleton">Carregando…</div>';
+  const { data, error } = await sb.from('pat_vinculos').select('*, para:pat_pessoas!para_pessoa_id(nome,tipo_pessoa)').eq('tenant_id',ctx.tenantId).eq('de_pessoa_id',_sucTitular).eq('ativo',true).order('tipo');
+  if(error){ card.innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _vincCache=data||[]; renderVinc();
+}
+function necessario(t){ return ['descendente','ascendente','conjuge'].includes(t); }
+function renderVinc(){
+  const card=$('#hCard');
+  if(!_vincCache.length){ card.innerHTML='<div class="empty"><b>Sem vínculos</b>Adicione descendentes, cônjuge, ascendentes…</div>'; return; }
+  card.innerHTML=`<table><thead><tr><th>Familiar</th><th>Tipo</th><th>Grau</th><th>Herdeiro necessário</th><th></th></tr></thead><tbody>
+    ${_vincCache.map(v=>`<tr>
+      <td><b>${esc(v.para?.nome)}</b></td>
+      <td>${esc(TIPO_VINCULO_MAP[v.tipo]||v.tipo)}</td>
+      <td>${esc(v.grau)||'—'}</td>
+      <td>${necessario(v.tipo)?'<span class="badge ativo">Sim</span>':'<span class="badge inativo">Não</span>'}</td>
+      <td><div class="row-actions">
+        <button class="btn btn-sm btn-ghost" data-perm="sucessorio:editar" onclick="formVinculo('${v.id}')">Editar</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-perm="sucessorio:excluir" onclick="inativarVinculo('${v.id}')">Excluir</button>
+      </div></td></tr>`).join('')}
+  </tbody></table>`;
+  aplicarPermBotoes(card);
+}
+function formVinculo(id){
+  const v=id?(_vincCache.find(x=>x.id===id)||{}):{}; const ed=!!v.id;
+  openModal(`<div class="modal-head"><h2>${ed?'Editar vínculo':'Adicionar vínculo'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Familiar *</label><select id="v_para"><option value="">—</option>${pessoaOpts(v.para_pessoa_id,_sucTitular)}</select></div>
+      <div class="grid2">
+        <div class="field"><label>Tipo *</label><select id="v_tipo">${TIPO_VINCULO.map(([k,l])=>`<option value="${k}" ${v.tipo===k?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label>Grau (descritivo)</label><input id="v_grau" placeholder="filho, neto, pai…" value="${esc(v.grau)}"></div>
+      </div>
+      <div class="field"><label>Observações</label><input id="v_obs" value="${esc(v.observacoes)}"></div>
+    </div>
+    <div class="modal-foot">${ed?`<button class="btn btn-ghost btn-danger" data-perm="sucessorio:excluir" id="v_del" style="margin-right:auto">Excluir</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" id="v_save">Salvar</button></div>`);
+  aplicarPermBotoes($('#modal'));
+  $('#v_del')?.addEventListener('click',async()=>{ if(!confirm('Excluir este vínculo?'))return; await inativarVinculo(v.id); closeModal(); });
+  $('#v_save').onclick=async()=>{
+    const para=$('#v_para').value; if(!para){ toast('Selecione o familiar.',true); return; }
+    const payload={ tenant_id:ctx.tenantId, de_pessoa_id:_sucTitular, para_pessoa_id:para, tipo:$('#v_tipo').value, grau:$('#v_grau').value.trim()||null, observacoes:$('#v_obs').value.trim()||null };
+    const btn=$('#v_save'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error } = ed? await sb.from('pat_vinculos').update(payload).eq('id',v.id).eq('tenant_id',ctx.tenantId) : await sb.from('pat_vinculos').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message,true); return; }
+    toast(ed?'Vínculo atualizado':'Vínculo adicionado'); closeModal(); carregarVinc();
+  };
+}
+async function inativarVinculo(id){ const {error}=await sb.from('pat_vinculos').update({ativo:false}).eq('id',id).eq('tenant_id',ctx.tenantId); if(error){toast(error.message,true);return;} toast('Vínculo excluído'); carregarVinc(); }
+
+// ---- aba Doações em vida ----
+async function sucDoacoes(){
+  const b=$('#sucBody');
+  b.innerHTML=`<div class="toolbar"><button class="btn btn-primary" data-perm="sucessorio:criar" id="dAdd">+ Nova doação</button><span style="flex:1"></span><input class="busca" id="dBusca" placeholder="Buscar por doador/donatário…"></div>
+    <div class="card" id="dCard"><div class="skeleton">Carregando…</div></div>`;
+  aplicarPermBotoes(b);
+  const { data:it } = await sb.from('pat_itcmd_uf').select('uf,aliquota,ativo').eq('tenant_id',ctx.tenantId).eq('ativo',true);
+  _itcmdMap={}; (it||[]).forEach(x=>_itcmdMap[(x.uf||'').toUpperCase()]=Number(x.aliquota));
+  $('#dAdd').onclick=()=>formDoacao();
+  await carregarDoacoes();
+  $('#dBusca').oninput=()=>renderDoacoes();
+}
+async function carregarDoacoes(){
+  const { data, error } = await sb.from('pat_doacoes').select('*, doador:pat_pessoas!doador_id(nome), donatario:pat_pessoas!donatario_id(nome)').eq('tenant_id',ctx.tenantId).eq('ativo',true).order('data_doacao',{ascending:false});
+  if(error){ $('#dCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _doacoesCache=data||[]; renderDoacoes();
+}
+function clausulasBadges(d){ const cs=[]; if(d.cl_inalienabilidade)cs.push('Inalienab.'); if(d.cl_impenhorabilidade)cs.push('Impenhorab.'); if(d.cl_incomunicabilidade)cs.push('Incomunicab.'); if(d.cl_reversao)cs.push('Reversão'); return cs.length?cs.map(c=>`<span class="badge role" style="margin:1px">${c}</span>`).join(' '):'—'; }
+function renderDoacoes(){
+  const card=$('#dCard'); const q=($('#dBusca')?.value||'').toLowerCase().trim();
+  let lista=_doacoesCache; if(q) lista=lista.filter(d=>(d.doador?.nome||'').toLowerCase().includes(q)||(d.donatario?.nome||'').toLowerCase().includes(q));
+  if(!lista.length){ card.innerHTML='<div class="empty"><b>Nenhuma doação</b>Registre a primeira doação em vida.</div>'; return; }
+  card.innerHTML=`<table><thead><tr><th>Doador → Donatário</th><th>Objeto</th><th class="num">Valor</th><th class="num">ITCMD</th><th>Usufruto</th><th>Cláusulas</th><th>Data</th><th></th></tr></thead><tbody>
+    ${lista.map(d=>`<tr>
+      <td><b>${esc(d.doador?.nome)}</b> → ${esc(d.donatario?.nome)}</td>
+      <td style="text-transform:capitalize">${esc(d.objeto_tipo)}${d.percentual?` · ${Number(d.percentual).toLocaleString('pt-BR')}%`:''}</td>
+      <td class="num">${fmtMoeda(d.valor)}</td>
+      <td class="num">${fmtMoeda(d.itcmd_valor)}${d.itcmd_aliquota?`<br><small style="color:var(--texto-3)">${Number(d.itcmd_aliquota).toLocaleString('pt-BR')}%</small>`:''}</td>
+      <td>${d.reserva_usufruto?'<span class="badge ativo">Sim</span>':'—'}</td>
+      <td>${clausulasBadges(d)}</td>
+      <td>${fmtData(d.data_doacao)}</td>
+      <td><div class="row-actions">
+        <button class="btn btn-sm btn-ghost" data-perm="sucessorio:editar" onclick="formDoacao('${d.id}')">Editar</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-perm="sucessorio:excluir" onclick="inativarDoacao('${d.id}')">Excluir</button>
+      </div></td></tr>`).join('')}
+  </tbody></table>`;
+  aplicarPermBotoes(card);
+}
+function formDoacao(id){
+  const d=id?(_doacoesCache.find(x=>x.id===id)||{}):{}; const ed=!!d.id; const chk=c=>c?'checked':'';
+  openModal(`<div class="modal-head"><h2>${ed?'Editar doação':'Nova doação em vida'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field"><label>Doador *</label><select id="d_doador"><option value="">—</option>${pessoaOpts(d.doador_id)}</select></div>
+        <div class="field"><label>Donatário *</label><select id="d_donat"><option value="">—</option>${pessoaOpts(d.donatario_id)}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Objeto</label><select id="d_obj">${[['quota','Quotas/ações'],['ativo','Ativo (bem)'],['valor','Valor em dinheiro']].map(([k,l])=>`<option value="${k}" ${(d.objeto_tipo||'quota')===k?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label>% (se aplicável)</label><input id="d_pct" type="number" step="0.0001" value="${d.percentual??''}"></div>
+      </div>
+      <div class="field"><label>Descrição</label><input id="d_desc" value="${esc(d.descricao)}"></div>
+      <div class="grid2">
+        <div class="field"><label>Valor (base ITCMD)</label><input id="d_valor" type="number" step="0.01" value="${d.valor??''}"></div>
+        <div class="field"><label>Data da doação</label><input id="d_data" type="date" value="${esc((d.data_doacao||'').slice(0,10))}"></div>
+      </div>
+      <div style="border-top:1px solid var(--linha);margin:6px 0 12px"></div>
+      <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500"><input type="checkbox" id="d_usuf" style="width:18px;height:18px;accent-color:var(--azul)" ${chk(d.reserva_usufruto)}> Reserva de usufruto</label></div>
+      <div class="field"><label>Usufrutuário (se houver)</label><select id="d_usufid"><option value="">—</option>${pessoaOpts(d.usufrutuario_id)}</select></div>
+      <div class="field"><label>Cláusulas restritivas</label>
+        <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:6px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="d_cl1" ${chk(d.cl_inalienabilidade)}> Inalienabilidade</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="d_cl2" ${chk(d.cl_impenhorabilidade)}> Impenhorabilidade</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="d_cl3" ${chk(d.cl_incomunicabilidade)}> Incomunicabilidade</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="d_cl4" ${chk(d.cl_reversao)}> Reversão</label>
+        </div></div>
+      <div style="border-top:1px solid var(--linha);margin:6px 0 12px"></div>
+      <div class="grid2">
+        <div class="field"><label>UF (ITCMD)</label><input id="d_uf" maxlength="2" style="text-transform:uppercase" value="${esc(d.uf)}"></div>
+        <div class="field"><label>Alíquota ITCMD (%)</label><input id="d_aliq" type="number" step="0.001" value="${d.itcmd_aliquota??''}"></div>
+      </div>
+      <div class="field"><label>ITCMD estimado</label><input id="d_itcmd" disabled value="${d.itcmd_valor!=null?fmtMoeda(d.itcmd_valor):'—'}"></div>
+      <div class="field"><label>Observações</label><input id="d_obs" value="${esc(d.observacoes)}"></div>
+    </div>
+    <div class="modal-foot">${ed?`<button class="btn btn-ghost btn-danger" data-perm="sucessorio:excluir" id="d_del" style="margin-right:auto">Excluir</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" id="d_save">Salvar</button></div>`);
+  aplicarPermBotoes($('#modal'));
+  const recalc=()=>{ const v=Number($('#d_valor').value)||0, a=Number($('#d_aliq').value)||0; $('#d_itcmd').value=fmtMoeda(v*a/100); };
+  $('#d_uf').oninput=()=>{ const uf=$('#d_uf').value.trim().toUpperCase(); if(_itcmdMap[uf]!=null && !$('#d_aliq').value){ $('#d_aliq').value=_itcmdMap[uf]; } recalc(); };
+  $('#d_valor').oninput=recalc; $('#d_aliq').oninput=recalc;
+  $('#d_del')?.addEventListener('click',async()=>{ if(!confirm('Excluir esta doação?'))return; await inativarDoacao(d.id); closeModal(); });
+  $('#d_save').onclick=async()=>{
+    const doador=$('#d_doador').value, donat=$('#d_donat').value;
+    if(!doador||!donat){ toast('Informe doador e donatário.',true); return; }
+    const num=x=>{ x=(x??'').toString().trim(); return x===''?null:Number(x); };
+    const valor=num($('#d_valor').value), aliq=num($('#d_aliq').value);
+    const payload={ tenant_id:ctx.tenantId, doador_id:doador, donatario_id:donat, objeto_tipo:$('#d_obj').value,
+      descricao:$('#d_desc').value.trim()||null, percentual:num($('#d_pct').value), valor,
+      reserva_usufruto:$('#d_usuf').checked, usufrutuario_id:$('#d_usufid').value||null,
+      cl_inalienabilidade:$('#d_cl1').checked, cl_impenhorabilidade:$('#d_cl2').checked, cl_incomunicabilidade:$('#d_cl3').checked, cl_reversao:$('#d_cl4').checked,
+      data_doacao:$('#d_data').value||null, uf:($('#d_uf').value.trim().toUpperCase()||null),
+      itcmd_aliquota:aliq, itcmd_valor:(valor!=null&&aliq!=null)?Number((valor*aliq/100).toFixed(2)):null,
+      observacoes:$('#d_obs').value.trim()||null };
+    const btn=$('#d_save'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error } = ed? await sb.from('pat_doacoes').update(payload).eq('id',d.id).eq('tenant_id',ctx.tenantId) : await sb.from('pat_doacoes').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message,true); return; }
+    toast(ed?'Doação atualizada':'Doação registrada'); closeModal(); carregarDoacoes();
+  };
+}
+async function inativarDoacao(id){ const {error}=await sb.from('pat_doacoes').update({ativo:false}).eq('id',id).eq('tenant_id',ctx.tenantId); if(error){toast(error.message,true);return;} toast('Doação excluída'); carregarDoacoes(); }
+
+// ---- aba Simulador de partilha ----
+function meacaoPadrao(regime){ if(regime==='comunhao_universal')return 50; if(regime==='comunhao_parcial')return 50; return 0; }
+function sucSimulador(){
+  const b=$('#sucBody');
+  b.innerHTML=`<div class="perm-tools">
+      <label style="font-weight:600;color:var(--texto-2)">Autor da herança:</label>
+      <select id="sAutor"><option value="">Selecione a pessoa…</option>${_pessoasSuc.filter(p=>p.tipo_pessoa==='PF').map(p=>`<option value="${p.id}" ${_sucAutor===p.id?'selected':''}>${esc(p.nome)}</option>`).join('')}</select>
+    </div>
+    <div class="perm-note">Estimativa didática. Meação e concorrência do cônjuge dependem do regime de bens e da origem dos bens (CC arts. 1.829 e 1.845) — ajuste os parâmetros conforme o caso concreto.</div>
+    <div id="simBody"><div class="card"><div class="empty">Selecione o autor da herança para simular.</div></div></div>`;
+  $('#sAutor').onchange=()=>{ _sucAutor=$('#sAutor').value||null; _sucAutor?carregarSim():($('#simBody').innerHTML='<div class="card"><div class="empty">Selecione o autor.</div></div>'); };
+  if(_sucAutor) carregarSim();
+}
+async function carregarSim(){
+  $('#simBody').innerHTML='<div class="card"><div class="skeleton">Calculando…</div></div>';
+  const autor=_pessoasSuc.find(p=>p.id===_sucAutor)||{};
+  const [pR,aR,vR]=await Promise.all([
+    sb.from('pat_participacoes').select('valor_nominal').eq('tenant_id',ctx.tenantId).eq('socio_id',_sucAutor).eq('ativo',true),
+    sb.from('pat_ativos').select('valor_atual').eq('tenant_id',ctx.tenantId).eq('proprietario_id',_sucAutor).eq('ativo',true),
+    sb.from('pat_vinculos').select('tipo, para:pat_pessoas!para_pessoa_id(nome)').eq('tenant_id',ctx.tenantId).eq('de_pessoa_id',_sucAutor).eq('ativo',true)
+  ]);
+  const quotas=(pR.data||[]).reduce((s,x)=>s+(Number(x.valor_nominal)||0),0);
+  const bens=(aR.data||[]).reduce((s,x)=>s+(Number(x.valor_atual)||0),0);
+  const vincs=vR.data||[];
+  window.__sim={ autor, patr:quotas+bens, quotas, bens,
+    descendentes:vincs.filter(v=>v.tipo==='descendente'),
+    ascendentes:vincs.filter(v=>v.tipo==='ascendente'),
+    conjuge:vincs.find(v=>v.tipo==='conjuge'||v.tipo==='companheiro') };
+  renderSim(meacaoPadrao(autor.regime_bens), false);
+}
+function renderSim(meacaoPct, conjugeConcorre){
+  const s=window.__sim; if(!s) return;
+  const { patr,quotas,bens,descendentes,ascendentes,conjuge }=s;
+  const meacao=patr*(Number(meacaoPct)||0)/100;
+  const heranca=Math.max(0, patr-meacao);
+  const temNec = descendentes.length>0 || ascendentes.length>0;
+  const legitima = temNec? heranca*0.5 : 0;
+  const disponivel = heranca - legitima;
+  const grupo = descendentes.length? descendentes : ascendentes;
+  const concorre = conjugeConcorre && conjuge && descendentes.length>0;
+  const divisor = grupo.length + (concorre?1:0);
+  const quinhao = divisor>0? legitima/divisor : 0;
+  $('#simBody').innerHTML=`
+    <div class="card"><div class="kpis">
+      <div class="kpi"><div class="lab">Patrimônio do autor</div><div class="val">${fmtMoeda(patr)}</div></div>
+      <div class="kpi"><div class="lab">Meação do cônjuge</div><div class="val">${fmtMoeda(meacao)}</div></div>
+      <div class="kpi"><div class="lab">Herança</div><div class="val">${fmtMoeda(heranca)}</div></div>
+      <div class="kpi"><div class="lab">Legítima</div><div class="val accent">${fmtMoeda(legitima)}</div></div>
+      <div class="kpi"><div class="lab">Disponível</div><div class="val">${fmtMoeda(disponivel)}</div></div>
+    </div>
+    <div style="padding:0 18px 16px;display:flex;gap:20px;flex-wrap:wrap;align-items:flex-end">
+      <div class="field" style="margin:0"><label>Meação do cônjuge (%)</label><input id="sMeacao" type="number" step="0.1" value="${meacaoPct}" style="max-width:130px"></div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:10px"><input type="checkbox" id="sConc" ${conjugeConcorre?'checked':''} style="width:18px;height:18px;accent-color:var(--azul)"> Cônjuge concorre com descendentes</label>
+      <div style="font-size:12.5px;color:var(--texto-3);margin-bottom:11px">Composição: quotas ${fmtMoeda(quotas)} + bens ${fmtMoeda(bens)}</div>
+    </div></div>
+    <div class="card" style="margin-top:18px;padding:18px">
+      <b style="font-family:'Playfair Display',serif;color:var(--azul-esc);font-size:15px">Quinhão por herdeiro necessário</b>
+      ${divisor>0?`<table style="margin-top:10px"><thead><tr><th>Herdeiro</th><th class="num">Quinhão (da legítima)</th></tr></thead><tbody>
+        ${grupo.map(g=>`<tr><td><b>${esc(g.para?.nome)}</b></td><td class="num">${fmtMoeda(quinhao)}</td></tr>`).join('')}
+        ${concorre?`<tr><td><b>${esc(conjuge.para?.nome)}</b> <span class="badge role">cônjuge</span></td><td class="num">${fmtMoeda(quinhao)}</td></tr>`:''}
+      </tbody></table>`:'<p style="margin-top:10px;color:var(--texto-3)">Sem herdeiros necessários cadastrados (descendentes/ascendentes). Cadastre na aba Herdeiros.</p>'}
+      <div style="margin-top:12px;font-size:13px;color:var(--texto-2)">A <b>parte disponível</b> (${fmtMoeda(disponivel)}) pode ser destinada livremente por testamento/doação.</div>
+    </div>`;
+  $('#sMeacao').onchange=()=>renderSim($('#sMeacao').value, $('#sConc').checked);
+  $('#sConc').onchange=()=>renderSim($('#sMeacao').value, $('#sConc').checked);
+}
+
+// ---- aba ITCMD por UF ----
+async function sucITCMD(){
+  const b=$('#sucBody');
+  b.innerHTML=`<div class="toolbar"><button class="btn btn-primary" data-perm="sucessorio:criar" id="iAdd">+ Nova UF</button>
+      <div class="perm-note" style="flex:1;margin:0">Alíquotas de ITCMD por UF (estimadas/efetivas), usadas para pré-preencher as doações. Variam por estado e estão em transição pela EC 132/2023.</div></div>
+    <div class="card" id="iCard"><div class="skeleton">Carregando…</div></div>`;
+  aplicarPermBotoes(b);
+  $('#iAdd').onclick=()=>formITCMD();
+  await carregarITCMD();
+}
+async function carregarITCMD(){
+  const { data, error } = await sb.from('pat_itcmd_uf').select('*').eq('tenant_id',ctx.tenantId).eq('ativo',true).order('uf');
+  if(error){ $('#iCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _itcmdCache=data||[]; renderITCMD();
+}
+function renderITCMD(){
+  const card=$('#iCard');
+  if(!_itcmdCache.length){ card.innerHTML='<div class="empty"><b>Nenhuma UF</b>Cadastre as alíquotas dos estados que você usa.</div>'; return; }
+  card.innerHTML=`<table><thead><tr><th>UF</th><th class="num">Alíquota</th><th>Descrição</th><th></th></tr></thead><tbody>
+    ${_itcmdCache.map(i=>`<tr>
+      <td><b>${esc(i.uf)}</b></td>
+      <td class="num">${Number(i.aliquota).toLocaleString('pt-BR',{maximumFractionDigits:3})}%</td>
+      <td>${esc(i.descricao)||'—'}</td>
+      <td><div class="row-actions">
+        <button class="btn btn-sm btn-ghost" data-perm="sucessorio:editar" onclick="formITCMD('${i.id}')">Editar</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-perm="sucessorio:excluir" onclick="inativarITCMD('${i.id}')">Excluir</button>
+      </div></td></tr>`).join('')}
+  </tbody></table>`;
+  aplicarPermBotoes(card);
+}
+function formITCMD(id){
+  const i=id?(_itcmdCache.find(x=>x.id===id)||{}):{}; const ed=!!i.id;
+  openModal(`<div class="modal-head"><h2>${ed?'Editar UF':'Nova UF'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field"><label>UF *</label><input id="i_uf" maxlength="2" style="text-transform:uppercase" value="${esc(i.uf)}"></div>
+        <div class="field"><label>Alíquota (%) *</label><input id="i_aliq" type="number" step="0.001" value="${i.aliquota??''}"></div>
+      </div>
+      <div class="field"><label>Descrição</label><input id="i_desc" placeholder="ex.: SC progressivo até 8%" value="${esc(i.descricao)}"></div>
+    </div>
+    <div class="modal-foot">${ed?`<button class="btn btn-ghost btn-danger" data-perm="sucessorio:excluir" id="i_del" style="margin-right:auto">Excluir</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" id="i_save">Salvar</button></div>`);
+  aplicarPermBotoes($('#modal'));
+  $('#i_del')?.addEventListener('click',async()=>{ if(!confirm('Excluir esta UF?'))return; await inativarITCMD(i.id); closeModal(); });
+  $('#i_save').onclick=async()=>{
+    const uf=$('#i_uf').value.trim().toUpperCase(); const aliq=$('#i_aliq').value.trim();
+    if(uf.length!==2){ toast('Informe a UF (2 letras).',true); return; }
+    if(aliq===''){ toast('Informe a alíquota.',true); return; }
+    const payload={ tenant_id:ctx.tenantId, uf, aliquota:Number(aliq), descricao:$('#i_desc').value.trim()||null };
+    const btn=$('#i_save'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error } = ed? await sb.from('pat_itcmd_uf').update(payload).eq('id',i.id).eq('tenant_id',ctx.tenantId) : await sb.from('pat_itcmd_uf').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message,true); return; }
+    toast(ed?'UF atualizada':'UF cadastrada'); closeModal(); carregarITCMD();
+  };
+}
+async function inativarITCMD(id){ const {error}=await sb.from('pat_itcmd_uf').update({ativo:false}).eq('id',id).eq('tenant_id',ctx.tenantId); if(error){toast(error.message,true);return;} toast('UF excluída'); carregarITCMD(); }
+
 // expõe handlers usados em onclick inline
 window.formEmpresa=formEmpresa; window.toggleEmpresa=toggleEmpresa;
 window.formUsuario=formUsuario; window.formNovoUsuario=formNovoUsuario; window.toggleUsuario=toggleUsuario;
@@ -1912,10 +2237,13 @@ window.formParticipacao=formParticipacao; window.inativarParticipacao=inativarPa
 window.formOnus=formOnus; window.inativarOnus=inativarOnus;
 window.formVencimento=formVencimento; window.inativarVencimento=inativarVencimento;
 window.baixarDoc=baixarDoc; window.inativarDoc=inativarDoc;
+window.formVinculo=formVinculo; window.inativarVinculo=inativarVinculo;
+window.formDoacao=formDoacao; window.inativarDoacao=inativarDoacao;
+window.formITCMD=formITCMD; window.inativarITCMD=inativarITCMD;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.14b (logo animado no login e hero)');
+console.log('Patrimonial Artecon — app-shell · build 2026.15a (Fase 7: Planejamento Sucessório)');
 </script>
 </body>
 </html>
