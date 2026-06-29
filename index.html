@@ -161,7 +161,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
     <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button class="btn btn-primary" id="btnLogin">Entrar</button>
-    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.08b</p>
+    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.09a</p>
   </div>
 </div>
 
@@ -187,6 +187,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <button class="nav-item" data-route="pessoas" data-modulo="pessoas"><span class="ic">&#128101;</span> Pessoas</button>
       <button class="nav-item" data-route="ativos" data-modulo="patrimonio"><span class="ic">&#128188;</span> Ativos</button>
       <button class="nav-item" data-route="societario" data-modulo="societario"><span class="ic">&#128202;</span> Societária</button>
+      <button class="nav-item" data-route="onus" data-modulo="onus"><span class="ic">&#128274;</span> Ônus e Direitos</button>
       <div class="nav-label" style="margin-top:14px">Administração</div>
       <button class="nav-item" data-route="empresas" data-modulo="admin"><span class="ic">&#127970;</span> Empresas</button>
       <button class="nav-item" data-route="usuarios" data-modulo="admin"><span class="ic">&#128100;</span> Usuários</button>
@@ -235,6 +236,10 @@ const TIPO_ATIVO = { imovel:'Imóvel', veiculo:'Veículo', participacao:'Partici
 const ESTADO_CIVIL = [['solteiro','Solteiro(a)'],['casado','Casado(a)'],['uniao_estavel','União estável'],['divorciado','Divorciado(a)'],['viuvo','Viúvo(a)'],['separado','Separado(a)']];
 const REGIME_BENS = [['comunhao_parcial','Comunhão parcial'],['comunhao_universal','Comunhão universal'],['separacao_total','Separação total'],['separacao_obrigatoria','Separação obrigatória'],['participacao_final','Participação final nos aquestos'],['nao_se_aplica','Não se aplica']];
 const SITUACAO_ATIVO = [['ativo','Ativo'],['alienado','Alienado'],['baixado','Baixado'],['onerado','Onerado']];
+const TIPO_ONUS = [['hipoteca','Hipoteca'],['alienacao_fiduciaria','Alienação fiduciária'],['penhor','Penhor'],['anticrese','Anticrese'],['usufruto','Usufruto'],['uso','Uso'],['habitacao','Habitação'],['servidao','Servidão'],['superficie','Superfície'],['penhora','Penhora'],['arresto','Arresto'],['sequestro','Sequestro'],['promessa_cv','Promessa de compra e venda'],['inalienabilidade','Cláusula de inalienabilidade'],['impenhorabilidade','Cláusula de impenhorabilidade'],['incomunicabilidade','Cláusula de incomunicabilidade'],['reversao','Cláusula de reversão'],['outro','Outro']];
+const TIPO_ONUS_MAP = Object.fromEntries(TIPO_ONUS);
+const SITUACAO_ONUS = [['ativo','Ativo'],['baixado','Baixado'],['em_execucao','Em execução'],['suspenso','Suspenso']];
+const SITUACAO_ONUS_MAP = Object.fromEntries(SITUACAO_ONUS);
 
 // Estado da sessão
 const ctx = { user:null, perfil:null, superadmin:false, tenants:[], tenantId:null, role:null, perms:{} };
@@ -253,7 +258,7 @@ function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
 
 // ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
 // rota -> módulo. Administração exige admin; demais telas usam a matriz.
-const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario' };
+const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', onus:'onus' };
 
 async function carregarPermissoes(tenantId){
   ctx.perms = {};
@@ -414,6 +419,7 @@ function rota(){
   else if(r==='pessoas') telaPessoas();
   else if(r==='ativos') telaAtivos();
   else if(r==='societario') telaSocietario();
+  else if(r==='onus') telaOnus();
   else semAcesso();
 }
 
@@ -1260,16 +1266,154 @@ async function inativarParticipacao(id, ativo){
   toast(ativo?'Participação excluída':'Participação reativada'); carregarQuadro();
 }
 
+// ============================================================
+// 2.4 ÔNUS E DIREITOS REAIS  (módulo 'onus')
+// ============================================================
+let _onusCache = [];
+let _ativosParaOnus = [];
+let _pessoasParaOnus = [];
+
+async function telaOnus(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>Ônus e Direitos Reais</h1><p>Gravames e direitos reais incidentes sobre os ativos (hipoteca, alienação fiduciária, usufruto, penhora, cláusulas restritivas…).</p></div>
+    <button class="btn btn-primary" data-perm="onus:criar" id="novoOnus">+ Novo ônus</button></div>
+    <div class="toolbar"><input class="busca" id="buscaOnus" placeholder="Buscar por ativo, favorecido ou registro…"></div>
+    <div class="card" id="onusCard"><div class="skeleton">Carregando…</div></div>`;
+  aplicarPermBotoes(c);
+  $('#novoOnus')?.addEventListener('click', ()=>formOnus());
+
+  const { data: ativos } = await sb.from('pat_ativos').select('id,descricao,ativo').eq('tenant_id', ctx.tenantId).order('descricao');
+  _ativosParaOnus = (ativos||[]).filter(x=>x.ativo!==false);
+  const { data: pes } = await sb.from('pat_pessoas').select('id,nome,tipo_pessoa,ativo').eq('tenant_id', ctx.tenantId).order('nome');
+  _pessoasParaOnus = (pes||[]).filter(x=>x.ativo!==false);
+
+  const { data, error } = await sb.from('pat_onus')
+    .select('*, ativo:pat_ativos!ativo_id(descricao), favorecido:pat_pessoas!favorecido_id(nome)')
+    .eq('tenant_id', ctx.tenantId).order('data_constituicao',{ascending:false});
+  if(error){ $('#onusCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _onusCache = data||[];
+  renderOnus(_onusCache);
+  $('#buscaOnus').oninput = e=>{
+    const q=e.target.value.toLowerCase().trim();
+    renderOnus(_onusCache.filter(o=>
+      (o.ativo?.descricao||'').toLowerCase().includes(q) ||
+      (o.favorecido?.nome||o.favorecido_nome||'').toLowerCase().includes(q) ||
+      (o.registro||'').toLowerCase().includes(q)));
+  };
+}
+
+function favNome(o){ return o.favorecido?.nome || o.favorecido_nome || '—'; }
+
+function renderOnus(lista){
+  const card=$('#onusCard');
+  if(!lista.length){ card.innerHTML=`<div class="empty"><b>Nenhum ônus</b>Cadastre o primeiro gravame desta empresa.</div>`; return; }
+  card.innerHTML=`<table><thead><tr><th>Ativo</th><th>Tipo</th><th>Favorecido</th><th class="num">Valor</th><th>Constituição</th><th>Vencimento</th><th>Situação</th><th>Status</th><th></th></tr></thead><tbody>
+    ${lista.map(o=>`<tr>
+      <td><b>${esc(o.ativo?.descricao)||'—'}</b></td>
+      <td>${esc(TIPO_ONUS_MAP[o.tipo]||o.tipo)}</td>
+      <td>${esc(favNome(o))}</td>
+      <td class="num">${fmtMoeda(o.valor)}</td>
+      <td>${fmtData(o.data_constituicao)}</td>
+      <td>${fmtData(o.data_vencimento)}</td>
+      <td><span class="badge sit">${esc(SITUACAO_ONUS_MAP[o.situacao]||o.situacao)}</span></td>
+      <td><span class="badge ${o.ativo?'ativo':'inativo'}">${o.ativo?'Ativo':'Inativo'}</span></td>
+      <td><div class="row-actions">
+        <button class="btn btn-sm btn-ghost" data-perm="onus:editar" onclick="formOnus('${o.id}')">Editar</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-perm="onus:excluir" onclick="inativarOnus('${o.id}',${o.ativo})">${o.ativo?'Excluir':'Reativar'}</button>
+      </div></td></tr>`).join('')}
+  </tbody></table>`;
+  aplicarPermBotoes(card);
+}
+
+function formOnus(id){
+  const o = id ? (_onusCache.find(x=>x.id===id)||{}) : {};
+  const ed = !!o.id;
+  openModal(`
+    <div class="modal-head"><h2>${ed?'Editar ônus':'Novo ônus / direito real'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field"><label>Ativo gravado *</label><select id="o_ativo"><option value="">—</option>
+          ${_ativosParaOnus.map(x=>`<option value="${x.id}" ${o.ativo_id===x.id?'selected':''}>${esc(x.descricao)}</option>`).join('')}</select></div>
+        <div class="field"><label>Tipo *</label><select id="o_tipo">
+          ${TIPO_ONUS.map(([v,l])=>`<option value="${v}" ${o.tipo===v?'selected':''}>${l}</option>`).join('')}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Favorecido (cadastrado)</label><select id="o_favid"><option value="">—</option>
+          ${_pessoasParaOnus.map(x=>`<option value="${x.id}" ${o.favorecido_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select></div>
+        <div class="field"><label>ou Favorecido externo</label><input id="o_favnome" placeholder="ex.: Banco X S/A" value="${esc(o.favorecido_nome)}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Valor garantido</label><input id="o_valor" type="number" step="0.01" value="${o.valor??''}"></div>
+        <div class="field"><label>Situação</label><select id="o_sit">
+          ${SITUACAO_ONUS.map(([v,l])=>`<option value="${v}" ${(o.situacao||'ativo')===v?'selected':''}>${l}</option>`).join('')}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Registro / Averbação</label><input id="o_reg" value="${esc(o.registro)}"></div>
+        <div class="field"><label>Cartório</label><input id="o_cart" value="${esc(o.cartorio)}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Data de constituição</label><input id="o_dcon" type="date" value="${esc((o.data_constituicao||'').slice(0,10))}"></div>
+        <div class="field"><label>Vencimento</label><input id="o_dven" type="date" value="${esc((o.data_vencimento||'').slice(0,10))}"></div>
+      </div>
+      <div class="field"><label>Data da baixa</label><input id="o_dbaixa" type="date" style="max-width:200px" value="${esc((o.data_baixa||'').slice(0,10))}"></div>
+      <div class="field"><label>Descrição</label><input id="o_desc" value="${esc(o.descricao)}"></div>
+      <div class="field"><label>Observações</label><input id="o_obs" value="${esc(o.observacoes)}"></div>
+    </div>
+    <div class="modal-foot">
+      ${ed ? (o.ativo!==false
+        ? `<button class="btn btn-ghost btn-danger" data-perm="onus:excluir" id="excluirOnus" style="margin-right:auto">Excluir</button>`
+        : `<button class="btn btn-ghost" data-perm="onus:editar" id="reativarOnus" style="margin-right:auto">Reativar</button>`) : ''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="salvarOnus">Salvar</button></div>`);
+  aplicarPermBotoes($('#modal'));
+  $('#excluirOnus')?.addEventListener('click', async ()=>{ if(!confirm('Excluir este ônus? Será inativado, mantendo o histórico.')) return; await inativarOnus(o.id, true); closeModal(); });
+  $('#reativarOnus')?.addEventListener('click', async ()=>{ await inativarOnus(o.id, false); closeModal(); });
+
+  $('#salvarOnus').onclick = async ()=>{
+    const ativo_id=$('#o_ativo').value;
+    if(!ativo_id){ toast('Selecione o ativo gravado.', true); return; }
+    const num=v=>{ v=(v??'').toString().trim(); return v===''?null:Number(v); };
+    const payload={
+      tenant_id: ctx.tenantId, ativo_id, tipo: $('#o_tipo').value,
+      favorecido_id: $('#o_favid').value||null,
+      favorecido_nome: $('#o_favnome').value.trim()||null,
+      valor: num($('#o_valor').value),
+      situacao: $('#o_sit').value||'ativo',
+      registro: $('#o_reg').value.trim()||null,
+      cartorio: $('#o_cart').value.trim()||null,
+      data_constituicao: $('#o_dcon').value||null,
+      data_vencimento: $('#o_dven').value||null,
+      data_baixa: $('#o_dbaixa').value||null,
+      descricao: $('#o_desc').value.trim()||null,
+      observacoes: $('#o_obs').value.trim()||null
+    };
+    const btn=$('#salvarOnus'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error } = ed
+      ? await sb.from('pat_onus').update(payload).eq('id', o.id).eq('tenant_id', ctx.tenantId)
+      : await sb.from('pat_onus').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message, true); return; }
+    toast(ed?'Ônus atualizado':'Ônus cadastrado'); closeModal(); telaOnus();
+  };
+}
+
+async function inativarOnus(id, ativo){
+  const { error } = await sb.from('pat_onus').update({ ativo: !ativo }).eq('id', id).eq('tenant_id', ctx.tenantId);
+  if(error){ toast(error.message, true); return; }
+  toast(ativo?'Ônus excluído':'Ônus reativado'); telaOnus();
+}
+
 // expõe handlers usados em onclick inline
 window.formEmpresa=formEmpresa; window.toggleEmpresa=toggleEmpresa;
 window.formUsuario=formUsuario; window.formNovoUsuario=formNovoUsuario; window.toggleUsuario=toggleUsuario;
 window.formPessoa=formPessoa; window.inativarPessoa=inativarPessoa;
 window.formAtivo=formAtivo; window.inativarAtivo=inativarAtivo;
 window.formParticipacao=formParticipacao; window.inativarParticipacao=inativarParticipacao;
+window.formOnus=formOnus; window.inativarOnus=inativarOnus;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.08b (conciliação capital × integralização)');
+console.log('Patrimonial Artecon — app-shell · build 2026.09a (Fase 3: Ônus e Direitos Reais)');
 </script>
 </body>
 </html>
