@@ -98,6 +98,12 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .badge.pf{background:#eaf3fb;color:var(--azul-esc)}
 .badge.pj{background:#f3eafb;color:#6b3fa0}
 .badge.sit{background:#fff4e5;color:var(--aviso);text-transform:capitalize}
+.kpis{display:flex;gap:14px;flex-wrap:wrap;padding:16px 18px}
+.kpi{flex:1;min-width:160px;background:#fbfcfd;border:1px solid var(--linha);border-radius:10px;padding:14px 16px}
+.kpi .lab{font-size:11.5px;color:var(--texto-3);font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+.kpi .val{font-size:20px;font-weight:700;color:var(--azul-esc);margin-top:4px;font-variant-numeric:tabular-nums}
+.kpi.warn .val{color:var(--aviso)}
+.kpi.ok .val{color:var(--ok)}
 
 /* ---------- Modal ---------- */
 .modal-bg{position:fixed;inset:0;background:rgba(15,30,45,.45);display:none;place-items:center;z-index:40;padding:20px;backdrop-filter:blur(2px)}
@@ -155,7 +161,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
     <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button class="btn btn-primary" id="btnLogin">Entrar</button>
-    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.08a</p>
+    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.08b</p>
   </div>
 </div>
 
@@ -1070,7 +1076,8 @@ async function telaSocietario(){
       <button class="btn btn-primary" data-perm="societario:criar" id="addSocio" disabled>+ Adicionar sócio</button>
     </div>
     <div class="perm-note">A sociedade é uma pessoa do tipo <b>PJ</b> cadastrada em Pessoas (a própria holding ou uma controlada). O sócio pode ser PF ou PJ. A soma das participações deve fechar 100%.</div>
-    <div class="card" id="socCard"><div class="empty">Selecione uma sociedade para ver o quadro societário.</div></div>`;
+    <div class="card" id="socCard"><div class="empty">Selecione uma sociedade para ver o quadro societário.</div></div>
+    <div class="card" id="concCard" style="margin-top:18px;display:none"></div>`;
   aplicarPermBotoes(c);
 
   const { data: pes } = await sb.from('pat_pessoas').select('id,nome,tipo_pessoa,ativo').eq('tenant_id', ctx.tenantId).order('nome');
@@ -1081,7 +1088,7 @@ async function telaSocietario(){
   sel.onchange = ()=>{
     _socAtual = sel.value||null;
     $('#addSocio').disabled = !_socAtual;
-    if(_socAtual) carregarQuadro(); else $('#socCard').innerHTML='<div class="empty">Selecione uma sociedade.</div>';
+    if(_socAtual) carregarQuadro(); else { $('#socCard').innerHTML='<div class="empty">Selecione uma sociedade.</div>'; $('#concCard').style.display='none'; }
   };
   $('#addSocio').onclick = ()=> _socAtual && formParticipacao();
 }
@@ -1094,6 +1101,7 @@ async function carregarQuadro(){
   if(error){ card.innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
   _partCache = data||[];
   renderQuadro();
+  carregarConciliacao();
 }
 
 function renderQuadro(){
@@ -1131,6 +1139,55 @@ function renderQuadro(){
     <b style="font-family:'Playfair Display',serif;font-size:16px;color:var(--azul-esc)">${esc(socNome)}</b>
     <span style="color:var(--texto-2)"> · Capital: ${fmtMoeda(totalCap)}${alerta}</span></div>${body}`;
   aplicarPermBotoes(card);
+}
+
+// Indicador: capital subscrito (quadro) × bens integralizados (ativos da PJ), por sócio
+async function carregarConciliacao(){
+  const card=$('#concCard'); if(!card) return;
+  // subscrito por sócio (participações já carregadas)
+  const subs={};
+  _partCache.filter(p=>p.ativo!==false).forEach(p=>{
+    const k=p.socio_id; subs[k]=subs[k]||{nome:p.socio?.nome, tipo:p.socio?.tipo_pessoa, valor:0};
+    subs[k].valor += Number(p.valor_nominal)||0;
+  });
+  // integralização em bens: ativos cuja PJ proprietária é a sociedade
+  const { data: ativos } = await sb.from('pat_ativos')
+    .select('valor_integralizacao, integralizado_por_id, integralizador:pat_pessoas!integralizado_por_id(nome,tipo_pessoa)')
+    .eq('tenant_id', ctx.tenantId).eq('proprietario_id', _socAtual).eq('ativo', true)
+    .not('integralizado_por_id','is',null);
+  const integ={};
+  (ativos||[]).forEach(a=>{
+    const k=a.integralizado_por_id; if(!k) return;
+    integ[k]=integ[k]||{nome:a.integralizador?.nome, tipo:a.integralizador?.tipo_pessoa, valor:0};
+    integ[k].valor += Number(a.valor_integralizacao)||0;
+  });
+  const capital=Object.values(subs).reduce((s,x)=>s+x.valor,0);
+  const bens=Object.values(integ).reduce((s,x)=>s+x.valor,0);
+  const dif=capital-bens;
+  const ids=[...new Set([...Object.keys(subs), ...Object.keys(integ)])];
+  if(!ids.length){ card.style.display='none'; return; }
+  const conciliado=Math.abs(dif)<0.01;
+  const difLabel = conciliado ? 'Conciliado' : (dif>0 ? 'Em dinheiro / a integralizar' : 'Bens acima do capital');
+  card.style.display='block';
+  card.innerHTML=`
+    <div style="padding:14px 18px;border-bottom:1px solid var(--linha)">
+      <b style="font-family:'Playfair Display',serif;font-size:16px;color:var(--azul-esc)">Conciliação capital × integralização</b>
+      <p style="font-size:13px;color:var(--texto-3);margin-top:2px">Capital subscrito (quadro societário) vs. bens integralizados (ativos da PJ), por sócio.</p>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="lab">Capital subscrito</div><div class="val">${fmtMoeda(capital)}</div></div>
+      <div class="kpi"><div class="lab">Integralizado em bens</div><div class="val">${fmtMoeda(bens)}</div></div>
+      <div class="kpi ${conciliado?'ok':'warn'}"><div class="lab">${difLabel}</div><div class="val">${fmtMoeda(Math.abs(dif))}</div></div>
+    </div>
+    <table><thead><tr><th>Sócio</th><th class="num">Subscrito</th><th class="num">Integralizado em bens</th><th class="num">Diferença</th></tr></thead><tbody>
+      ${ids.map(k=>{ const s=subs[k]?.valor||0, b=integ[k]?.valor||0, d=s-b, ref=subs[k]||integ[k];
+        return `<tr>
+          <td><b>${esc(ref?.nome)}</b> <span class="badge ${ref?.tipo==='PJ'?'pj':'pf'}" style="margin-left:4px">${esc(ref?.tipo)}</span></td>
+          <td class="num">${fmtMoeda(s)}</td>
+          <td class="num">${fmtMoeda(b)}</td>
+          <td class="num" style="${Math.abs(d)<0.01?'':'color:var(--aviso);font-weight:600'}">${fmtMoeda(d)}</td>
+        </tr>`;}).join('')}
+    </tbody></table>`;
 }
 
 function formParticipacao(id){
@@ -1212,7 +1269,7 @@ window.formParticipacao=formParticipacao; window.inativarParticipacao=inativarPa
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.08a (Fase 2: Estrutura Societária)');
+console.log('Patrimonial Artecon — app-shell · build 2026.08b (conciliação capital × integralização)');
 </script>
 </body>
 </html>
