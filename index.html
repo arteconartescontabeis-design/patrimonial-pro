@@ -155,7 +155,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
     <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button class="btn btn-primary" id="btnLogin">Entrar</button>
-    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.07d</p>
+    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.08a</p>
   </div>
 </div>
 
@@ -180,6 +180,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="nav-label">Cadastros</div>
       <button class="nav-item" data-route="pessoas" data-modulo="pessoas"><span class="ic">&#128101;</span> Pessoas</button>
       <button class="nav-item" data-route="ativos" data-modulo="patrimonio"><span class="ic">&#128188;</span> Ativos</button>
+      <button class="nav-item" data-route="societario" data-modulo="societario"><span class="ic">&#128202;</span> Societária</button>
       <div class="nav-label" style="margin-top:14px">Administração</div>
       <button class="nav-item" data-route="empresas" data-modulo="admin"><span class="ic">&#127970;</span> Empresas</button>
       <button class="nav-item" data-route="usuarios" data-modulo="admin"><span class="ic">&#128100;</span> Usuários</button>
@@ -246,7 +247,7 @@ function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
 
 // ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
 // rota -> módulo. Administração exige admin; demais telas usam a matriz.
-const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio' };
+const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario' };
 
 async function carregarPermissoes(tenantId){
   ctx.perms = {};
@@ -406,6 +407,7 @@ function rota(){
   else if(r==='acessos') telaAcessos();
   else if(r==='pessoas') telaPessoas();
   else if(r==='ativos') telaAtivos();
+  else if(r==='societario') telaSocietario();
   else semAcesso();
 }
 
@@ -795,7 +797,11 @@ function formPessoa(id){
       <div class="field"><label>UF</label><input id="p_uf" maxlength="2" style="max-width:90px;text-transform:uppercase" value="${esc(p.uf)}"></div>
       <div class="field"><label>Observações</label><input id="p_obs" value="${esc(p.observacoes)}"></div>
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    <div class="modal-foot">
+      ${ed ? (p.ativo!==false
+        ? `<button class="btn btn-ghost btn-danger" data-perm="pessoas:excluir" id="excluirPessoa" style="margin-right:auto">Excluir pessoa</button>`
+        : `<button class="btn btn-ghost" data-perm="pessoas:editar" id="reativarPessoa" style="margin-right:auto">Reativar</button>`) : ''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-primary" id="salvarPessoa">Salvar</button></div>`);
 
   const aplicaTipo=()=>{
@@ -808,6 +814,15 @@ function formPessoa(id){
     $('#bloco_pj').classList.toggle('hidden', t!=='PJ');
   };
   $('#p_tipo').onchange = aplicaTipo;
+
+  aplicarPermBotoes($('#modal'));
+  $('#excluirPessoa')?.addEventListener('click', async ()=>{
+    if(!confirm('Excluir esta pessoa? Será inativada e sai das listagens, mantendo o histórico para auditoria.')) return;
+    await inativarPessoa(p.id, true); closeModal();
+  });
+  $('#reativarPessoa')?.addEventListener('click', async ()=>{
+    await inativarPessoa(p.id, false); closeModal();
+  });
 
   $('#salvarPessoa').onclick = async ()=>{
     const t=$('#p_tipo').value;
@@ -1037,15 +1052,167 @@ async function inativarAtivo(id, ativo){
   toast(ativo?'Ativo inativado':'Ativo reativado'); telaAtivos();
 }
 
+// ============================================================
+// 2.3 ESTRUTURA SOCIETÁRIA  (módulo 'societario')
+// ============================================================
+let _pjList = [];          // sociedades possíveis (PJ)
+let _todasPessoas = [];    // sócios possíveis (PF e PJ)
+let _partCache = [];       // participações da sociedade selecionada
+let _socAtual = null;      // id da sociedade selecionada
+
+async function telaSocietario(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>Estrutura Societária</h1><p>Quadro societário das empresas: sócios, quotas/ações e participação.</p></div></div>
+    <div class="perm-tools">
+      <label style="font-weight:600;color:var(--texto-2)">Sociedade:</label>
+      <select id="socSel"><option value="">Selecione uma empresa (PJ)…</option></select>
+      <span style="flex:1"></span>
+      <button class="btn btn-primary" data-perm="societario:criar" id="addSocio" disabled>+ Adicionar sócio</button>
+    </div>
+    <div class="perm-note">A sociedade é uma pessoa do tipo <b>PJ</b> cadastrada em Pessoas (a própria holding ou uma controlada). O sócio pode ser PF ou PJ. A soma das participações deve fechar 100%.</div>
+    <div class="card" id="socCard"><div class="empty">Selecione uma sociedade para ver o quadro societário.</div></div>`;
+  aplicarPermBotoes(c);
+
+  const { data: pes } = await sb.from('pat_pessoas').select('id,nome,tipo_pessoa,ativo').eq('tenant_id', ctx.tenantId).order('nome');
+  _todasPessoas = (pes||[]).filter(x=>x.ativo!==false);
+  _pjList = _todasPessoas.filter(x=>x.tipo_pessoa==='PJ');
+  const sel=$('#socSel');
+  sel.innerHTML += _pjList.map(p=>`<option value="${p.id}">${esc(p.nome)}</option>`).join('');
+  sel.onchange = ()=>{
+    _socAtual = sel.value||null;
+    $('#addSocio').disabled = !_socAtual;
+    if(_socAtual) carregarQuadro(); else $('#socCard').innerHTML='<div class="empty">Selecione uma sociedade.</div>';
+  };
+  $('#addSocio').onclick = ()=> _socAtual && formParticipacao();
+}
+
+async function carregarQuadro(){
+  const card=$('#socCard'); card.innerHTML='<div class="skeleton">Carregando…</div>';
+  const { data, error } = await sb.from('pat_participacoes')
+    .select('*, socio:pat_pessoas!socio_id(nome,tipo_pessoa)')
+    .eq('tenant_id', ctx.tenantId).eq('sociedade_id', _socAtual).order('percentual',{ascending:false});
+  if(error){ card.innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _partCache = data||[];
+  renderQuadro();
+}
+
+function renderQuadro(){
+  const card=$('#socCard');
+  const lista=_partCache;
+  const totalCap=lista.reduce((s,p)=>s+(Number(p.valor_nominal)||0),0);
+  const totalPct=lista.reduce((s,p)=>s+(Number(p.percentual)||0),0);
+  const socNome=_pjList.find(p=>p.id===_socAtual)?.nome||'';
+  const alerta = (lista.length && Math.abs(totalPct-100)>0.01)
+    ? `<span style="color:var(--aviso);font-weight:600"> · ⚠ soma ${totalPct.toLocaleString('pt-BR',{maximumFractionDigits:2})}% (≠ 100%)</span>` : '';
+  let body;
+  if(!lista.length){
+    body=`<div class="empty"><b>Sem sócios</b>Adicione o primeiro sócio de ${esc(socNome)}.</div>`;
+  }else{
+    body=`<table><thead><tr><th>Sócio</th><th>Título</th><th class="num">Quantidade</th><th class="num">%</th><th class="num">Valor nominal</th><th>Admin.</th><th>Status</th><th></th></tr></thead><tbody>
+      ${lista.map(p=>`<tr>
+        <td><b>${esc(p.socio?.nome)}</b> <span class="badge ${p.socio?.tipo_pessoa==='PJ'?'pj':'pf'}" style="margin-left:4px">${esc(p.socio?.tipo_pessoa)}</span></td>
+        <td style="text-transform:capitalize">${esc(p.tipo_titulo)}${p.classe?' · '+esc(p.classe):''}</td>
+        <td class="num">${p.quantidade!=null?Number(p.quantidade).toLocaleString('pt-BR'):'—'}</td>
+        <td class="num">${p.percentual!=null?Number(p.percentual).toLocaleString('pt-BR',{maximumFractionDigits:4})+'%':'—'}</td>
+        <td class="num">${fmtMoeda(p.valor_nominal)}</td>
+        <td>${p.administrador?'<span class="badge ativo">Sim</span>':'—'}</td>
+        <td><span class="badge ${p.ativo?'ativo':'inativo'}">${p.ativo?'Ativo':'Inativo'}</span></td>
+        <td><div class="row-actions">
+          <button class="btn btn-sm btn-ghost" data-perm="societario:editar" onclick="formParticipacao('${p.id}')">Editar</button>
+          <button class="btn btn-sm btn-ghost btn-danger" data-perm="societario:excluir" onclick="inativarParticipacao('${p.id}',${p.ativo})">${p.ativo?'Excluir':'Reativar'}</button>
+        </div></td></tr>`).join('')}
+      </tbody>
+      <tfoot><tr style="font-weight:700;background:#fbfcfd">
+        <td colspan="2">Totais</td><td class="num">—</td>
+        <td class="num">${totalPct.toLocaleString('pt-BR',{maximumFractionDigits:2})}%</td>
+        <td class="num">${fmtMoeda(totalCap)}</td><td colspan="3"></td></tr></tfoot></table>`;
+  }
+  card.innerHTML=`<div style="padding:14px 18px;border-bottom:1px solid var(--linha)">
+    <b style="font-family:'Playfair Display',serif;font-size:16px;color:var(--azul-esc)">${esc(socNome)}</b>
+    <span style="color:var(--texto-2)"> · Capital: ${fmtMoeda(totalCap)}${alerta}</span></div>${body}`;
+  aplicarPermBotoes(card);
+}
+
+function formParticipacao(id){
+  const p = id ? (_partCache.find(x=>x.id===id)||{}) : {};
+  const ed = !!p.id;
+  const socNome=_pjList.find(x=>x.id===_socAtual)?.nome||'';
+  const socios=_todasPessoas.filter(x=>x.id!==_socAtual);   // sócio não pode ser a própria sociedade
+  openModal(`
+    <div class="modal-head"><h2>${ed?'Editar participação':'Adicionar sócio'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Sociedade</label><input value="${esc(socNome)}" disabled></div>
+      <div class="field"><label>Sócio *</label><select id="q_socio"><option value="">—</option>
+        ${socios.map(x=>`<option value="${x.id}" ${p.socio_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select></div>
+      <div class="grid2">
+        <div class="field"><label>Tipo de título</label><select id="q_tipo">
+          <option value="quota" ${(p.tipo_titulo||'quota')==='quota'?'selected':''}>Quota</option>
+          <option value="acao" ${p.tipo_titulo==='acao'?'selected':''}>Ação</option></select></div>
+        <div class="field"><label>Classe</label><input id="q_classe" placeholder="ex.: ON, PN, A" value="${esc(p.classe)}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Quantidade</label><input id="q_qtde" type="number" step="0.0001" value="${p.quantidade??''}"></div>
+        <div class="field"><label>% de participação</label><input id="q_pct" type="number" step="0.0001" value="${p.percentual??''}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Valor nominal / integralizado</label><input id="q_valor" type="number" step="0.01" value="${p.valor_nominal??''}"></div>
+        <div class="field"><label>Data de entrada</label><input id="q_entrada" type="date" value="${esc((p.data_entrada||'').slice(0,10))}"></div>
+      </div>
+      <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500">
+        <input type="checkbox" id="q_admin" style="width:18px;height:18px;accent-color:var(--azul)" ${p.administrador?'checked':''}> É administrador(a) da sociedade</label></div>
+      <div class="field"><label>Observações</label><input id="q_obs" value="${esc(p.observacoes)}"></div>
+    </div>
+    <div class="modal-foot">
+      ${ed ? (p.ativo!==false
+        ? `<button class="btn btn-ghost btn-danger" data-perm="societario:excluir" id="excluirPart" style="margin-right:auto">Excluir</button>`
+        : `<button class="btn btn-ghost" data-perm="societario:editar" id="reativarPart" style="margin-right:auto">Reativar</button>`) : ''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="salvarPart">Salvar</button></div>`);
+  aplicarPermBotoes($('#modal'));
+  $('#excluirPart')?.addEventListener('click', async ()=>{ if(!confirm('Excluir esta participação? Será inativada, mantendo o histórico.')) return; await inativarParticipacao(p.id, true); closeModal(); });
+  $('#reativarPart')?.addEventListener('click', async ()=>{ await inativarParticipacao(p.id, false); closeModal(); });
+
+  $('#salvarPart').onclick = async ()=>{
+    const socio_id=$('#q_socio').value;
+    if(!socio_id){ toast('Selecione o sócio.', true); return; }
+    const num=v=>{ v=(v??'').toString().trim(); return v===''?null:Number(v); };
+    const payload={
+      tenant_id: ctx.tenantId, sociedade_id: _socAtual, socio_id,
+      tipo_titulo: $('#q_tipo').value||'quota',
+      classe: $('#q_classe').value.trim()||null,
+      quantidade: num($('#q_qtde').value),
+      percentual: num($('#q_pct').value),
+      valor_nominal: num($('#q_valor').value),
+      administrador: $('#q_admin').checked,
+      data_entrada: $('#q_entrada').value||null,
+      observacoes: $('#q_obs').value.trim()||null
+    };
+    const btn=$('#salvarPart'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error } = ed
+      ? await sb.from('pat_participacoes').update(payload).eq('id', p.id).eq('tenant_id', ctx.tenantId)
+      : await sb.from('pat_participacoes').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message, true); return; }
+    toast(ed?'Participação atualizada':'Sócio adicionado'); closeModal(); carregarQuadro();
+  };
+}
+
+async function inativarParticipacao(id, ativo){
+  const { error } = await sb.from('pat_participacoes').update({ ativo: !ativo }).eq('id', id).eq('tenant_id', ctx.tenantId);
+  if(error){ toast(error.message, true); return; }
+  toast(ativo?'Participação excluída':'Participação reativada'); carregarQuadro();
+}
+
 // expõe handlers usados em onclick inline
 window.formEmpresa=formEmpresa; window.toggleEmpresa=toggleEmpresa;
 window.formUsuario=formUsuario; window.formNovoUsuario=formNovoUsuario; window.toggleUsuario=toggleUsuario;
 window.formPessoa=formPessoa; window.inativarPessoa=inativarPessoa;
 window.formAtivo=formAtivo; window.inativarAtivo=inativarAtivo;
+window.formParticipacao=formParticipacao; window.inativarParticipacao=inativarParticipacao;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.07d (fix embed proprietário)');
+console.log('Patrimonial Artecon — app-shell · build 2026.08a (Fase 2: Estrutura Societária)');
 </script>
 </body>
 </html>
