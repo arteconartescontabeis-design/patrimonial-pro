@@ -37,10 +37,14 @@ a{color:var(--azul-cla)}
 .login-brand .logo-mark span{font-size:24px}
 .brand-logo{display:block;max-width:210px;max-height:66px;margin:0 auto 18px;object-fit:contain}
 .auth-wrap{width:100%;max-width:400px}
-.auth-logo{max-width:200px;height:auto;display:block;margin:0 auto 16px}
+.auth-logo{max-width:200px;height:auto;display:block;margin:0 auto 16px;animation:logoIn .9s cubic-bezier(.2,.8,.2,1) both, logoFloat 4.5s ease-in-out .9s infinite, logoGlow 4.5s ease-in-out .9s infinite}
+@keyframes logoIn{from{opacity:0;transform:translateY(-16px) scale(.9)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes logoFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+@keyframes logoGlow{0%,100%{filter:drop-shadow(0 0 2px rgba(95,208,232,.15))}50%{filter:drop-shadow(0 0 16px rgba(95,208,232,.6))}}
+@media (prefers-reduced-motion: reduce){.auth-logo,.hero-logo{animation:none!important}}
 .auth-title{text-align:center;color:#fff;font-weight:800;font-size:22px;letter-spacing:.04em;text-transform:uppercase;font-family:'Playfair Display',serif}
 .auth-tagline{text-align:center;color:rgba(255,255,255,.8);font-size:12px;letter-spacing:.06em;margin:5px 0 24px;text-transform:uppercase}
-.hero-logo{display:block;max-height:48px;max-width:230px;object-fit:contain;margin-bottom:14px;position:relative;z-index:1}
+.hero-logo{display:block;max-height:48px;max-width:230px;object-fit:contain;margin-bottom:14px;position:relative;z-index:1;animation:logoIn .9s cubic-bezier(.2,.8,.2,1) both, logoFloat 4.5s ease-in-out .9s infinite, logoGlow 4.5s ease-in-out .9s infinite}
 .login-brand b{font-family:'Playfair Display',serif;font-size:21px;color:var(--azul-esc);display:block}
 .login-brand small{color:var(--texto-3);font-size:12.5px;letter-spacing:.3px}
 .login-card h1{font-size:22px;margin-bottom:4px}
@@ -195,7 +199,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
       <button class="btn btn-primary" id="btnLogin">Entrar</button>
-      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.14a</p>
+      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.14b</p>
     </div>
   </div>
 </div>
@@ -1911,7 +1915,7 @@ window.baixarDoc=baixarDoc; window.inativarDoc=inativarDoc;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.14a (abertura com logo Artecon embutido)');
+console.log('Patrimonial Artecon — app-shell · build 2026.14b (logo animado no login e hero)');
 </script>
 </body>
 </html>
