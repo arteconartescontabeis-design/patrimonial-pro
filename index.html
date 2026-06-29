@@ -107,6 +107,11 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .badge.venc{background:#fdeaea;color:var(--erro)}
 .badge.prox{background:#fff4e5;color:var(--aviso)}
 .badge.fut{background:#eef7ee;color:var(--ok)}
+.bar-row{display:flex;align-items:center;gap:12px;padding:6px 0}
+.bar-row .blab{width:200px;font-size:13.5px;color:var(--texto-2);flex-shrink:0}
+.bar-track{flex:1;background:#eef2f6;border-radius:6px;height:22px;overflow:hidden;min-width:60px}
+.bar-fill{height:100%;background:linear-gradient(90deg,var(--azul-cla),var(--azul));border-radius:6px}
+.bar-val{width:140px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;font-size:13.5px;color:var(--azul-esc);flex-shrink:0}
 
 /* ---------- Modal ---------- */
 .modal-bg{position:fixed;inset:0;background:rgba(15,30,45,.45);display:none;place-items:center;z-index:40;padding:20px;backdrop-filter:blur(2px)}
@@ -164,7 +169,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
     <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button class="btn btn-primary" id="btnLogin">Entrar</button>
-    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.11a</p>
+    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.12a</p>
   </div>
 </div>
 
@@ -193,6 +198,8 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <button class="nav-item" data-route="onus" data-modulo="onus"><span class="ic">&#128274;</span> Ônus e Direitos</button>
       <button class="nav-item" data-route="vencimentos" data-modulo="vencimentos"><span class="ic">&#128197;</span> Vencimentos</button>
       <button class="nav-item" data-route="ged" data-modulo="ged"><span class="ic">&#128193;</span> Documentos</button>
+      <div class="nav-label" style="margin-top:14px">Painéis</div>
+      <button class="nav-item" data-route="bi" data-modulo="bi"><span class="ic">&#128200;</span> BI / Relatórios</button>
       <div class="nav-label" style="margin-top:14px">Administração</div>
       <button class="nav-item" data-route="empresas" data-modulo="admin"><span class="ic">&#127970;</span> Empresas</button>
       <button class="nav-item" data-route="usuarios" data-modulo="admin"><span class="ic">&#128100;</span> Usuários</button>
@@ -268,7 +275,7 @@ function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
 
 // ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
 // rota -> módulo. Administração exige admin; demais telas usam a matriz.
-const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged' };
+const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', bi:'bi' };
 
 async function carregarPermissoes(tenantId){
   ctx.perms = {};
@@ -432,6 +439,7 @@ function rota(){
   else if(r==='onus') telaOnus();
   else if(r==='vencimentos') telaVencimentos();
   else if(r==='ged') telaGED();
+  else if(r==='bi') telaBI();
   else semAcesso();
 }
 
@@ -1716,6 +1724,88 @@ async function inativarDoc(id){
   toast('Documento excluído'); await carregarDocs();
 }
 
+// ============================================================
+// 2.7 BI / RELATÓRIOS  (módulo 'bi') — painel consolidado (somente leitura)
+// ============================================================
+async function telaBI(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>BI / Relatórios</h1><p>Panorama consolidado da holding selecionada.</p></div></div>
+    <div id="biBody"><div class="card"><div class="skeleton">Carregando indicadores…</div></div></div>`;
+  const T=ctx.tenantId;
+  const [aR,pR,prR,oR,vR,dR] = await Promise.all([
+    sb.from('pat_ativos').select('tipo_ativo,valor_atual,situacao').eq('tenant_id',T).eq('ativo',true),
+    sb.from('pat_pessoas').select('id,nome,tipo_pessoa').eq('tenant_id',T).eq('ativo',true),
+    sb.from('pat_participacoes').select('sociedade_id,valor_nominal').eq('tenant_id',T).eq('ativo',true),
+    sb.from('pat_onus').select('valor,situacao,data_vencimento,ativo_id,tipo').eq('tenant_id',T).eq('ativo',true),
+    sb.from('pat_vencimentos').select('titulo,data_vencimento,status,valor').eq('tenant_id',T).eq('ativo',true),
+    sb.from('pat_documentos').select('id').eq('tenant_id',T).eq('ativo',true)
+  ]);
+  const ativos=aR.data||[], pessoas=pR.data||[], parts=prR.data||[], onus=oR.data||[], vencs=vR.data||[], docs=dR.data||[];
+  const nomeMap={}; pessoas.forEach(p=>nomeMap[p.id]=p.nome);
+
+  const patTotal=ativos.reduce((s,a)=>s+(Number(a.valor_atual)||0),0);
+  const porTipo={}; ativos.forEach(a=>{ const k=a.tipo_ativo; porTipo[k]=porTipo[k]||{count:0,valor:0}; porTipo[k].count++; porTipo[k].valor+=Number(a.valor_atual)||0; });
+  const pf=pessoas.filter(p=>p.tipo_pessoa==='PF').length, pj=pessoas.filter(p=>p.tipo_pessoa==='PJ').length;
+
+  const socMap={}; parts.forEach(p=>{ socMap[p.sociedade_id]=(socMap[p.sociedade_id]||0)+(Number(p.valor_nominal)||0); });
+  const capitalTotal=Object.values(socMap).reduce((s,x)=>s+x,0);
+  const sociedades=Object.entries(socMap).map(([id,v])=>({nome:nomeMap[id]||'(sociedade)',valor:v})).sort((a,b)=>b.valor-a.valor);
+
+  const vig=onus.filter(o=>['ativo','em_execucao','suspenso'].includes(o.situacao));
+  const garantido=vig.reduce((s,o)=>s+(Number(o.valor)||0),0);
+  const onerados=new Set(vig.map(o=>o.ativo_id)).size;
+
+  const rows=[
+    ...vencs.filter(v=>v.status==='pendente').map(v=>({titulo:v.titulo,data:v.data_vencimento})),
+    ...onus.filter(o=>['ativo','em_execucao','suspenso'].includes(o.situacao) && o.data_vencimento).map(o=>({titulo:(TIPO_ONUS_MAP[o.tipo]||o.tipo),data:o.data_vencimento}))
+  ];
+  const vencidos=rows.filter(r=>{const d=diasPara(r.data);return d!=null&&d<0;}).length;
+  const prox30=rows.filter(r=>{const d=diasPara(r.data);return d!=null&&d>=0&&d<=30;}).length;
+  const proximos=rows.filter(r=>diasPara(r.data)!=null).sort((a,b)=>String(a.data).localeCompare(String(b.data))).slice(0,8);
+
+  const maxTipo=Math.max(1,...Object.values(porTipo).map(x=>x.valor));
+  const maxSoc=Math.max(1,...sociedades.map(s=>s.valor));
+
+  $('#biBody').innerHTML=`
+    <div class="card"><div class="kpis">
+      <div class="kpi"><div class="lab">Patrimônio (valor atual)</div><div class="val">${fmtMoeda(patTotal)}</div></div>
+      <div class="kpi"><div class="lab">Ativos</div><div class="val">${ativos.length}</div></div>
+      <div class="kpi"><div class="lab">Capital social</div><div class="val">${fmtMoeda(capitalTotal)}</div></div>
+      <div class="kpi ${vig.length?'warn':''}"><div class="lab">Ônus vigentes</div><div class="val">${vig.length}</div></div>
+      <div class="kpi ${vencidos?'warn':''}"><div class="lab">Vencidos</div><div class="val">${vencidos}</div></div>
+      <div class="kpi"><div class="lab">Documentos</div><div class="val">${docs.length}</div></div>
+    </div></div>
+
+    <div class="card" style="margin-top:18px;padding:18px">
+      <b style="font-family:'Playfair Display',serif;color:var(--azul-esc);font-size:15px">Patrimônio por tipo de ativo</b>
+      <div style="margin-top:14px">
+        ${Object.keys(porTipo).length? Object.entries(porTipo).sort((a,b)=>b[1].valor-a[1].valor).map(([k,x])=>`
+          <div class="bar-row"><div class="blab">${esc(TIPO_ATIVO[k]||k)} <span style="color:var(--texto-3)">(${x.count})</span></div>
+            <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2,x.valor/maxTipo*100)}%"></div></div>
+            <div class="bar-val">${fmtMoeda(x.valor)}</div></div>`).join('') : '<div class="empty">Sem ativos cadastrados.</div>'}
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px;padding:18px">
+      <b style="font-family:'Playfair Display',serif;color:var(--azul-esc);font-size:15px">Próximos vencimentos</b>
+      ${proximos.length?`<table style="margin-top:10px"><tbody>
+        ${proximos.map(r=>`<tr><td style="width:120px">${fmtData(r.data)}</td><td style="width:140px">${chipPrazo(r.data)}</td><td><b>${esc(r.titulo)}</b></td></tr>`).join('')}
+      </tbody></table>`:'<p style="margin-top:10px;color:var(--texto-3)">Nenhum vencimento com data.</p>'}
+      <div style="margin-top:12px;font-size:13px;color:var(--texto-2)">Vencidos: <b>${vencidos}</b> · Próximos 30 dias: <b>${prox30}</b> · Valor garantido em ônus: <b>${fmtMoeda(garantido)}</b></div>
+    </div>
+
+    <div class="card" style="margin-top:18px;padding:18px">
+      <b style="font-family:'Playfair Display',serif;color:var(--azul-esc);font-size:15px">Composição societária por capital</b>
+      <div style="margin-top:14px">
+        ${sociedades.length? sociedades.map(s=>`
+          <div class="bar-row"><div class="blab">${esc(s.nome)}</div>
+            <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2,s.valor/maxSoc*100)}%"></div></div>
+            <div class="bar-val">${fmtMoeda(s.valor)}</div></div>`).join('') : '<div class="empty">Sem quadro societário cadastrado.</div>'}
+      </div>
+      <div style="margin-top:12px;font-size:13px;color:var(--texto-2)">Pessoas: <b>${pf}</b> PF · <b>${pj}</b> PJ · Ativos onerados: <b>${onerados}</b></div>
+    </div>`;
+}
+
 // expõe handlers usados em onclick inline
 window.formEmpresa=formEmpresa; window.toggleEmpresa=toggleEmpresa;
 window.formUsuario=formUsuario; window.formNovoUsuario=formNovoUsuario; window.toggleUsuario=toggleUsuario;
@@ -1728,7 +1818,7 @@ window.baixarDoc=baixarDoc; window.inativarDoc=inativarDoc;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.11a (Fase 5: GED / Documentos)');
+console.log('Patrimonial Artecon — app-shell · build 2026.12a (Fase 6: BI / Relatórios)');
 </script>
 </body>
 </html>
