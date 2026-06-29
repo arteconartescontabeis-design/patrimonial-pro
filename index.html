@@ -203,7 +203,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
       <button class="btn btn-primary" id="btnLogin">Entrar</button>
-      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.16a</p>
+      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.16b</p>
     </div>
   </div>
 </div>
@@ -235,10 +235,11 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="nav-label" style="margin-top:14px">Núcleo operacional</div>
       <button class="nav-item" data-route="ativos" data-modulo="patrimonio"><span class="ic">&#128188;</span> Ativos</button>
       <button class="nav-item" data-route="societario" data-modulo="societario"><span class="ic">&#128202;</span> Societária</button>
+      <button class="nav-item" data-route="analise" data-modulo="societario"><span class="ic">&#128200;</span> Análise % Capital</button>
       <button class="nav-item" data-route="onus" data-modulo="onus"><span class="ic">&#128274;</span> Ônus e Direitos</button>
       <button class="nav-item" data-route="vencimentos" data-modulo="vencimentos"><span class="ic">&#128197;</span> Vencimentos</button>
       <button class="nav-item" data-route="ged" data-modulo="ged"><span class="ic">&#128193;</span> Documentos</button>
-      <button class="nav-item" data-route="sucessorio" data-modulo="sucessorio"><span class="ic">&#128220;</span> Sucessório</button>
+      <button class="nav-item" data-route="sucessorio" data-modulo="sucessorio"><span class="ic">&#128220;</span> Planejamento Sucessório</button>
 
       <div class="nav-label" style="margin-top:14px">Painéis</div>
       <button class="nav-item" data-route="bi" data-modulo="bi"><span class="ic">&#128200;</span> BI / Relatórios</button>
@@ -322,7 +323,7 @@ function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
 
 // ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
 // rota -> módulo. Administração exige admin; demais telas usam a matriz.
-const ROUTE_MOD = { inicio:'inicio', empresas:'admin', usuarios:'admin', acessos:'admin', auditoria:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', sucessorio:'sucessorio', bi:'bi' };
+const ROUTE_MOD = { inicio:'inicio', empresas:'admin', usuarios:'admin', acessos:'admin', auditoria:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', analise:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', sucessorio:'sucessorio', bi:'bi' };
 
 async function carregarPermissoes(tenantId){
   ctx.perms = {};
@@ -486,6 +487,7 @@ function rota(){
   else if(r==='pessoas') telaPessoas();
   else if(r==='ativos') telaAtivos();
   else if(r==='societario') telaSocietario();
+  else if(r==='analise') telaAnalise();
   else if(r==='onus') telaOnus();
   else if(r==='vencimentos') telaVencimentos();
   else if(r==='ged') telaGED();
@@ -1928,14 +1930,13 @@ function pessoaOpts(sel, exclude){ return _pessoasSuc.filter(p=>p.id!==exclude).
 async function telaSucessorio(){
   const c=$('#content');
   c.innerHTML=`<div class="page-head"><div><h1>Planejamento Sucessório</h1><p>Herdeiros, doações em vida, simulação de partilha e ITCMD.</p></div></div>
-    <div class="tabs">${[['herdeiros','Herdeiros'],['doacoes','Doações em vida'],['analise','Análise'],['simulador','Simulador de partilha'],['itcmd','ITCMD por UF']].map(([k,l])=>`<button class="tab ${_sucTab===k?'active':''}" data-tab="${k}">${l}</button>`).join('')}</div>
+    <div class="tabs">${[['herdeiros','Herdeiros'],['doacoes','Doações em vida'],['simulador','Simulador de partilha'],['itcmd','ITCMD por UF']].map(([k,l])=>`<button class="tab ${_sucTab===k?'active':''}" data-tab="${k}">${l}</button>`).join('')}</div>
     <div id="sucBody"><div class="card"><div class="skeleton">Carregando…</div></div></div>`;
   c.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{ _sucTab=b.dataset.tab; telaSucessorio(); });
   const { data } = await sb.from('pat_pessoas').select('id,nome,tipo_pessoa,regime_bens,conjuge_id,ativo').eq('tenant_id',ctx.tenantId).order('nome');
   _pessoasSuc=(data||[]).filter(x=>x.ativo!==false);
   if(_sucTab==='herdeiros') sucHerdeiros();
   else if(_sucTab==='doacoes') sucDoacoes();
-  else if(_sucTab==='analise') sucAnalise();
   else if(_sucTab==='simulador') sucSimulador();
   else sucITCMD();
 }
@@ -2287,10 +2288,14 @@ async function refreshDoacaoItem(d){
 }
 
 // ---- aba Análise (efetivação da transferência de quotas) ----
-async function sucAnalise(){
-  const b=$('#sucBody');
-  b.innerHTML=`<div class="perm-note">Doações de quotas pendentes de efetivação. Ao confirmar, o sistema transfere o percentual do doador para o donatário no quadro societário — ação registrada na Auditoria.</div>
+async function telaAnalise(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>Análise · % Capital</h1><p>Doações de quotas pendentes de efetivação no quadro societário.</p></div></div>
+    <div class="perm-note">Ao confirmar uma transferência, o sistema transfere o percentual do doador para o donatário no quadro societário (pat_participacoes) — ação registrada na Auditoria.</div>
     <div class="card" id="anCard"><div class="skeleton">Carregando…</div></div>`;
+  await carregarAnalise();
+}
+async function carregarAnalise(){
   const { data, error } = await sb.from('pat_doacoes')
     .select('*, doador:pat_pessoas!doador_id(nome), donatario:pat_pessoas!donatario_id(nome), participacao:pat_participacoes!participacao_id(id,percentual,valor_nominal,quantidade,sociedade:pat_pessoas!sociedade_id(id,nome))')
     .eq('tenant_id',ctx.tenantId).eq('ativo',true).eq('objeto_tipo','quota').eq('aplicada',false).order('data_doacao');
@@ -2327,7 +2332,7 @@ async function aplicarDoacao(id){
   const e2=await sb.from('pat_participacoes').insert({ tenant_id:ctx.tenantId, sociedade_id:d.participacao.sociedade?.id||null, socio_id:d.donatario_id, tipo_titulo:'quota', percentual:D, valor_nominal:Number((V*fator).toFixed(2)), quantidade:Q?Number((Q*fator).toFixed(4)):null, observacoes:'Recebido por doação' });
   if(e2.error){ toast('Erro ao criar participação do donatário: '+e2.error.message, true); return; }
   await sb.from('pat_doacoes').update({ aplicada:true, data_aplicacao:new Date().toISOString().slice(0,10) }).eq('id',d.id).eq('tenant_id',ctx.tenantId);
-  toast('Transferência aplicada no quadro societário'); sucAnalise();
+  toast('Transferência aplicada no quadro societário'); carregarAnalise();
 }
 
 // ---- cônjuge automático (integração 3) ----
@@ -2401,7 +2406,7 @@ window.aplicarDoacao=aplicarDoacao; window.addConjuge=addConjuge; window.audDeta
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.16a (Fase 8: integrações sucessórias + Análise + Auditoria global)');
+console.log('Patrimonial Artecon — app-shell · build 2026.16b (Análise % Capital como módulo próprio)');
 </script>
 </body>
 </html>
