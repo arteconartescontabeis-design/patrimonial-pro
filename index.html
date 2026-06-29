@@ -206,7 +206,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
       <button class="btn btn-primary" id="btnLogin">Entrar</button>
-      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.17a</p>
+      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.17b</p>
     </div>
   </div>
 </div>
@@ -857,11 +857,11 @@ function formPessoa(id){
           <div class="field"><label>Estado civil</label><select id="p_ecivil"><option value="">—</option>
             ${ESTADO_CIVIL.map(([v,l])=>`<option value="${v}" ${p.estado_civil===v?'selected':''}>${l}</option>`).join('')}</select></div>
           <div class="field"><label>Regime de bens</label><select id="p_regime"><option value="">—</option>
-            ${REGIME_BENS.map(([v,l])=>`<option value="${v}" ${p.regime_bens===v?'selected':''}>${l}</option>`).join('')}</select></div>
+            ${REGIME_BENS.map(([v,l])=>`<option value="${v}" ${p.regime_bens===v?'selected':''}>${l}</option>`).join('')}</select><div class="hint">Usado no simulador de partilha (Planejamento Sucessório) para estimar a meação do cônjuge.</div></div>
         </div>
         <div class="grid2">
           <div class="field"><label>Cônjuge</label><select id="p_conjuge"><option value="">—</option>
-            ${pfList.map(x=>`<option value="${x.id}" ${p.conjuge_id===x.id?'selected':''}>${esc(x.nome)}</option>`).join('')}</select></div>
+            ${pfList.map(x=>`<option value="${x.id}" ${p.conjuge_id===x.id?'selected':''}>${esc(x.nome)}</option>`).join('')}</select><div class="hint">Preenchido aqui, o cônjuge é sugerido automaticamente nos Herdeiros do Planejamento Sucessório.</div></div>
           <div class="field"><label>Naturalidade</label><input id="p_natural" value="${esc(p.naturalidade)}"></div>
         </div>
       </div>
@@ -1069,7 +1069,7 @@ function formAtivo(id){
       <div class="field"><label>Descrição *</label><input id="a_desc" value="${esc(a.descricao)}"></div>
       <div class="grid2">
         <div class="field"><label>Proprietário</label><select id="a_prop"><option value="">—</option>
-          ${_pessoasParaSelect.map(x=>`<option value="${x.id}" ${a.proprietario_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select></div>
+          ${_pessoasParaSelect.map(x=>`<option value="${x.id}" ${a.proprietario_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select><div class="hint">Define a quem o bem pertence — necessário para doar este ativo no Planejamento Sucessório.</div></div>
         <div class="field"><label>Documento / Registro</label><input id="a_doc" value="${esc(a.documento)}"></div>
       </div>
       <div class="grid2">
@@ -1077,11 +1077,12 @@ function formAtivo(id){
         <div class="field"><label>Data de aquisição</label><input id="a_daq" type="date" value="${esc((a.data_aquisicao||'').slice(0,10))}"></div>
       </div>
       <div class="grid2">
-        <div class="field"><label>Valor atual</label><input id="a_vat" type="number" step="0.01" value="${a.valor_atual??''}"></div>
+        <div class="field"><label>Valor atual</label><input id="a_vat" type="number" step="0.01" value="${a.valor_atual??''}"><div class="hint">Compõe o patrimônio nos painéis e no simulador de partilha.</div></div>
         <div class="field"><label>Data da avaliação</label><input id="a_dav" type="date" value="${esc((a.data_avaliacao||'').slice(0,10))}"></div>
       </div>
       <div style="border-top:1px solid var(--linha);margin:6px 0 14px"></div>
       <div class="nav-label" style="padding:0;margin-bottom:10px">Integralização (origem do bem)</div>
+      <div class="hint" style="margin:-4px 0 10px">Preencha quando o bem foi conferido ao capital de uma PJ (Lei 9.249/95, art. 23). Usado na conciliação capital × integralização.</div>
       <div class="grid2">
         <div class="field"><label>Integralizado por</label><select id="a_integr"><option value="">—</option>
           ${_pessoasParaSelect.map(x=>`<option value="${x.id}" ${a.integralizado_por_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select></div>
@@ -1115,6 +1116,9 @@ function formAtivo(id){
     const desc=$('#a_desc').value.trim();
     if(!desc){ toast('Informe a descrição.', true); return; }
     const num=v=>{ v=(v??'').toString().trim(); return v===''?null:Number(v); };
+    if($('#a_integr').value && num($('#a_vintegr').value)==null){
+      if(!confirm('Você indicou "Integralizado por" mas não informou o valor da integralização.\n\nSem o valor, a conciliação capital × integralização ficará incompleta. Salvar mesmo assim?')) return;
+    }
     const payload={
       tenant_id: ctx.tenantId, tipo_ativo:t, descricao:desc,
       proprietario_id: $('#a_prop').value||null,
@@ -1415,14 +1419,14 @@ function formOnus(id){
     <div class="modal-head"><h2>${ed?'Editar ônus':'Novo ônus / direito real'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
     <div class="modal-body">
       <div class="grid2">
-        <div class="field"><label>Ativo gravado *</label><select id="o_ativo"><option value="">—</option>
-          ${_ativosParaOnus.map(x=>`<option value="${x.id}" ${o.ativo_id===x.id?'selected':''}>${esc(x.descricao)}</option>`).join('')}</select></div>
-        <div class="field"><label>Tipo *</label><select id="o_tipo">
+        <div class="field"><label>Ativo gravado <span class="req">*</span></label><select id="o_ativo"><option value="">—</option>
+          ${_ativosParaOnus.map(x=>`<option value="${x.id}" ${o.ativo_id===x.id?'selected':''}>${esc(x.descricao)}</option>`).join('')}</select><div class="hint">${_ativosParaOnus.length?'O bem sobre o qual recai o gravame — passa a constar como "onerado".':'<span class="warn">Nenhum ativo disponível. Cadastre o bem em Patrimônio → Ativos primeiro.</span>'}</div></div>
+        <div class="field"><label>Tipo <span class="req">*</span></label><select id="o_tipo">
           ${TIPO_ONUS.map(([v,l])=>`<option value="${v}" ${o.tipo===v?'selected':''}>${l}</option>`).join('')}</select></div>
       </div>
       <div class="grid2">
         <div class="field"><label>Favorecido (cadastrado)</label><select id="o_favid"><option value="">—</option>
-          ${_pessoasParaOnus.map(x=>`<option value="${x.id}" ${o.favorecido_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select></div>
+          ${_pessoasParaOnus.map(x=>`<option value="${x.id}" ${o.favorecido_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select><div class="hint">Para usufruto/hipoteca, indique o beneficiário — pessoa cadastrada ou nome externo ao lado.</div></div>
         <div class="field"><label>ou Favorecido externo</label><input id="o_favnome" placeholder="ex.: Banco X S/A" value="${esc(o.favorecido_nome)}"></div>
       </div>
       <div class="grid2">
@@ -1455,6 +1459,10 @@ function formOnus(id){
   $('#salvarOnus').onclick = async ()=>{
     const ativo_id=$('#o_ativo').value;
     if(!ativo_id){ toast('Selecione o ativo gravado.', true); return; }
+    const tipoOn=$('#o_tipo').value;
+    if(['usufruto','hipoteca','penhor','alienacao_fiduciaria'].includes(tipoOn) && !$('#o_favid').value && !$('#o_favnome').value.trim()){
+      if(!confirm('Este tipo de ônus normalmente tem um favorecido/beneficiário, mas nenhum foi indicado.\n\nSalvar mesmo assim?')) return;
+    }
     const num=v=>{ v=(v??'').toString().trim(); return v===''?null:Number(v); };
     const payload={
       tenant_id: ctx.tenantId, ativo_id, tipo: $('#o_tipo').value,
@@ -2433,7 +2441,7 @@ window.aplicarDoacao=aplicarDoacao; window.addConjuge=addConjuge; window.audDeta
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.17a (usabilidade: campos obrigatórios e validações explicativas)');
+console.log('Patrimonial Artecon — app-shell · build 2026.17b (usabilidade: dicas e validações em Pessoas, Ativos e Ônus)');
 </script>
 </body>
 </html>
