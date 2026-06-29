@@ -104,6 +104,9 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .kpi .val{font-size:20px;font-weight:700;color:var(--azul-esc);margin-top:4px;font-variant-numeric:tabular-nums}
 .kpi.warn .val{color:var(--aviso)}
 .kpi.ok .val{color:var(--ok)}
+.badge.venc{background:#fdeaea;color:var(--erro)}
+.badge.prox{background:#fff4e5;color:var(--aviso)}
+.badge.fut{background:#eef7ee;color:var(--ok)}
 
 /* ---------- Modal ---------- */
 .modal-bg{position:fixed;inset:0;background:rgba(15,30,45,.45);display:none;place-items:center;z-index:40;padding:20px;backdrop-filter:blur(2px)}
@@ -161,7 +164,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
     <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button class="btn btn-primary" id="btnLogin">Entrar</button>
-    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.09a</p>
+    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.11a</p>
   </div>
 </div>
 
@@ -188,6 +191,8 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <button class="nav-item" data-route="ativos" data-modulo="patrimonio"><span class="ic">&#128188;</span> Ativos</button>
       <button class="nav-item" data-route="societario" data-modulo="societario"><span class="ic">&#128202;</span> Societária</button>
       <button class="nav-item" data-route="onus" data-modulo="onus"><span class="ic">&#128274;</span> Ônus e Direitos</button>
+      <button class="nav-item" data-route="vencimentos" data-modulo="vencimentos"><span class="ic">&#128197;</span> Vencimentos</button>
+      <button class="nav-item" data-route="ged" data-modulo="ged"><span class="ic">&#128193;</span> Documentos</button>
       <div class="nav-label" style="margin-top:14px">Administração</div>
       <button class="nav-item" data-route="empresas" data-modulo="admin"><span class="ic">&#127970;</span> Empresas</button>
       <button class="nav-item" data-route="usuarios" data-modulo="admin"><span class="ic">&#128100;</span> Usuários</button>
@@ -240,6 +245,11 @@ const TIPO_ONUS = [['hipoteca','Hipoteca'],['alienacao_fiduciaria','Alienação 
 const TIPO_ONUS_MAP = Object.fromEntries(TIPO_ONUS);
 const SITUACAO_ONUS = [['ativo','Ativo'],['baixado','Baixado'],['em_execucao','Em execução'],['suspenso','Suspenso']];
 const SITUACAO_ONUS_MAP = Object.fromEntries(SITUACAO_ONUS);
+const CATEGORIA_VENC = [['tributario','Tributário'],['societario','Societário'],['contratual','Contratual'],['licenca','Licença/Alvará'],['imovel','Imóvel'],['veiculo','Veículo'],['trabalhista','Trabalhista'],['outro','Outro']];
+const CATEGORIA_VENC_MAP = Object.fromEntries(CATEGORIA_VENC);
+const RECORRENCIA = [['unica','Única'],['mensal','Mensal'],['trimestral','Trimestral'],['semestral','Semestral'],['anual','Anual']];
+const STATUS_VENC = [['pendente','Pendente'],['cumprido','Cumprido'],['cancelado','Cancelado']];
+const STATUS_VENC_MAP = Object.fromEntries(STATUS_VENC);
 
 // Estado da sessão
 const ctx = { user:null, perfil:null, superadmin:false, tenants:[], tenantId:null, role:null, perms:{} };
@@ -258,7 +268,7 @@ function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
 
 // ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
 // rota -> módulo. Administração exige admin; demais telas usam a matriz.
-const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', onus:'onus' };
+const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged' };
 
 async function carregarPermissoes(tenantId){
   ctx.perms = {};
@@ -420,6 +430,8 @@ function rota(){
   else if(r==='ativos') telaAtivos();
   else if(r==='societario') telaSocietario();
   else if(r==='onus') telaOnus();
+  else if(r==='vencimentos') telaVencimentos();
+  else if(r==='ged') telaGED();
   else semAcesso();
 }
 
@@ -1403,6 +1415,307 @@ async function inativarOnus(id, ativo){
   toast(ativo?'Ônus excluído':'Ônus reativado'); telaOnus();
 }
 
+// ============================================================
+// 2.5 VENCIMENTOS  (módulo 'vencimentos') — painel consolidado
+// ============================================================
+let _vencRows = [];          // linhas consolidadas (manual + ônus)
+let _vencFiltro = 'abertos';
+let _ativosParaVenc = [];
+let _pessoasParaVenc = [];
+let _vencCache = [];         // só os manuais (para edição)
+
+function diasPara(d){ if(!d) return null; const h=new Date(); h.setHours(0,0,0,0); const x=new Date(String(d).slice(0,10)+'T00:00:00'); return Math.round((x-h)/86400000); }
+function chipPrazo(d){ const n=diasPara(d); if(n==null) return '—';
+  if(n<0) return `<span class="badge venc">${Math.abs(n)}d vencido</span>`;
+  if(n<=30) return `<span class="badge prox">faltam ${n}d</span>`;
+  return `<span class="badge fut">faltam ${n}d</span>`; }
+
+async function telaVencimentos(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>Vencimentos</h1><p>Prazos e obrigações consolidados — inclui os vencimentos dos ônus automaticamente.</p></div>
+    <button class="btn btn-primary" data-perm="vencimentos:criar" id="novoVenc">+ Novo vencimento</button></div>
+    <div class="card" id="vencKpis"></div>
+    <div class="toolbar" style="margin-top:18px">
+      <select id="vencFiltro" style="max-width:220px">
+        <option value="abertos">Em aberto</option>
+        <option value="vencidos">Vencidos</option>
+        <option value="prox30">Próximos 30 dias</option>
+        <option value="todos">Todos</option>
+      </select>
+      <input class="busca" id="buscaVenc" placeholder="Buscar por título ou vínculo…">
+    </div>
+    <div class="card" id="vencCard"><div class="skeleton">Carregando…</div></div>`;
+  aplicarPermBotoes(c);
+  $('#novoVenc')?.addEventListener('click', ()=>formVencimento());
+
+  const { data: ativos } = await sb.from('pat_ativos').select('id,descricao,ativo').eq('tenant_id', ctx.tenantId).order('descricao');
+  _ativosParaVenc = (ativos||[]).filter(x=>x.ativo!==false);
+  const { data: pes } = await sb.from('pat_pessoas').select('id,nome,tipo_pessoa,ativo').eq('tenant_id', ctx.tenantId).order('nome');
+  _pessoasParaVenc = (pes||[]).filter(x=>x.ativo!==false);
+
+  // manuais
+  const { data: vs, error } = await sb.from('pat_vencimentos')
+    .select('*, ativo_rel:pat_ativos!ativo_id(descricao), pessoa_rel:pat_pessoas!pessoa_id(nome)')
+    .eq('tenant_id', ctx.tenantId);
+  if(error){ $('#vencCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _vencCache = (vs||[]).filter(v=>v.ativo!==false);
+  // ônus com vencimento
+  const { data: os } = await sb.from('pat_onus')
+    .select('id,tipo,valor,data_vencimento,situacao, ativo_rel:pat_ativos!ativo_id(descricao)')
+    .eq('tenant_id', ctx.tenantId).eq('ativo', true).not('data_vencimento','is',null);
+
+  const linhasManuais = _vencCache.map(v=>({
+    source:'manual', id:v.id, titulo:v.titulo, categoria:CATEGORIA_VENC_MAP[v.categoria]||v.categoria,
+    vinculo: v.ativo_rel?.descricao || v.pessoa_rel?.nome || '—',
+    data:v.data_vencimento, valor:v.valor, statusTxt:STATUS_VENC_MAP[v.status]||v.status,
+    aberto: v.status==='pendente'
+  }));
+  const linhasOnus = (os||[]).map(o=>({
+    source:'onus', id:o.id, titulo:(TIPO_ONUS_MAP[o.tipo]||o.tipo), categoria:'Ônus',
+    vinculo:o.ativo_rel?.descricao||'—', data:o.data_vencimento, valor:o.valor,
+    statusTxt:SITUACAO_ONUS_MAP[o.situacao]||o.situacao,
+    aberto:['ativo','em_execucao','suspenso'].includes(o.situacao)
+  }));
+  _vencRows = [...linhasManuais, ...linhasOnus].sort((a,b)=>String(a.data).localeCompare(String(b.data)));
+
+  renderKpisVenc();
+  $('#vencFiltro').onchange = e=>{ _vencFiltro=e.target.value; renderVenc(); };
+  $('#buscaVenc').oninput = ()=>renderVenc();
+  renderVenc();
+}
+
+function renderKpisVenc(){
+  const abertos=_vencRows.filter(r=>r.aberto);
+  const vencidos=abertos.filter(r=>{ const d=diasPara(r.data); return d!=null && d<0; }).length;
+  const prox=abertos.filter(r=>{ const d=diasPara(r.data); return d!=null && d>=0 && d<=30; }).length;
+  $('#vencKpis').innerHTML=`<div class="kpis">
+    <div class="kpi ${vencidos?'warn':''}"><div class="lab">Vencidos</div><div class="val">${vencidos}</div></div>
+    <div class="kpi"><div class="lab">Próximos 30 dias</div><div class="val">${prox}</div></div>
+    <div class="kpi"><div class="lab">Em aberto</div><div class="val">${abertos.length}</div></div>
+  </div>`;
+}
+
+function renderVenc(){
+  const card=$('#vencCard');
+  const q=($('#buscaVenc')?.value||'').toLowerCase().trim();
+  let lista=_vencRows.slice();
+  if(_vencFiltro==='abertos') lista=lista.filter(r=>r.aberto);
+  else if(_vencFiltro==='vencidos') lista=lista.filter(r=>{ const d=diasPara(r.data); return r.aberto && d!=null && d<0; });
+  else if(_vencFiltro==='prox30') lista=lista.filter(r=>{ const d=diasPara(r.data); return r.aberto && d!=null && d>=0 && d<=30; });
+  if(q) lista=lista.filter(r=>(r.titulo||'').toLowerCase().includes(q)||(r.vinculo||'').toLowerCase().includes(q));
+  if(!lista.length){ card.innerHTML=`<div class="empty"><b>Nada por aqui</b>Nenhum vencimento para este filtro.</div>`; return; }
+  card.innerHTML=`<table><thead><tr><th>Vencimento</th><th>Prazo</th><th>Título</th><th>Categoria</th><th>Vínculo</th><th class="num">Valor</th><th>Status</th><th></th></tr></thead><tbody>
+    ${lista.map(r=>`<tr>
+      <td>${fmtData(r.data)}</td>
+      <td>${r.aberto?chipPrazo(r.data):'—'}</td>
+      <td><b>${esc(r.titulo)}</b></td>
+      <td>${esc(r.categoria)}${r.source==='onus'?' <span class="badge role" style="margin-left:4px">Ônus</span>':''}</td>
+      <td>${esc(r.vinculo)}</td>
+      <td class="num">${fmtMoeda(r.valor)}</td>
+      <td><span class="badge ${r.aberto?'sit':'inativo'}">${esc(r.statusTxt)}</span></td>
+      <td><div class="row-actions">
+        ${r.source==='manual'
+          ? `<button class="btn btn-sm btn-ghost" data-perm="vencimentos:editar" onclick="formVencimento('${r.id}')">Editar</button>
+             <button class="btn btn-sm btn-ghost btn-danger" data-perm="vencimentos:excluir" onclick="inativarVencimento('${r.id}')">Excluir</button>`
+          : `<span style="font-size:12px;color:var(--texto-3)">gerencie em Ônus</span>`}
+      </div></td></tr>`).join('')}
+  </tbody></table>`;
+  aplicarPermBotoes(card);
+}
+
+function formVencimento(id){
+  const v = id ? (_vencCache.find(x=>x.id===id)||{}) : {};
+  const ed = !!v.id;
+  openModal(`
+    <div class="modal-head"><h2>${ed?'Editar vencimento':'Novo vencimento'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Título *</label><input id="v_tit" value="${esc(v.titulo)}"></div>
+      <div class="grid2">
+        <div class="field"><label>Categoria</label><select id="v_cat">
+          ${CATEGORIA_VENC.map(([val,l])=>`<option value="${val}" ${(v.categoria||'outro')===val?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label>Vencimento *</label><input id="v_data" type="date" value="${esc((v.data_vencimento||'').slice(0,10))}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Recorrência</label><select id="v_rec">
+          ${RECORRENCIA.map(([val,l])=>`<option value="${val}" ${(v.recorrencia||'unica')===val?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label>Valor</label><input id="v_valor" type="number" step="0.01" value="${v.valor??''}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Vínculo: ativo</label><select id="v_ativo"><option value="">—</option>
+          ${_ativosParaVenc.map(x=>`<option value="${x.id}" ${v.ativo_id===x.id?'selected':''}>${esc(x.descricao)}</option>`).join('')}</select></div>
+        <div class="field"><label>Vínculo: pessoa / responsável</label><select id="v_pessoa"><option value="">—</option>
+          ${_pessoasParaVenc.map(x=>`<option value="${x.id}" ${v.pessoa_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Status</label><select id="v_status">
+          ${STATUS_VENC.map(([val,l])=>`<option value="${val}" ${(v.status||'pendente')===val?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label>Data de cumprimento</label><input id="v_dcump" type="date" value="${esc((v.data_cumprimento||'').slice(0,10))}"></div>
+      </div>
+      <div class="field"><label>Observações</label><input id="v_obs" value="${esc(v.observacoes)}"></div>
+    </div>
+    <div class="modal-foot">
+      ${ed ? `<button class="btn btn-ghost btn-danger" data-perm="vencimentos:excluir" id="excluirVenc" style="margin-right:auto">Excluir</button>` : ''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="salvarVenc">Salvar</button></div>`);
+  aplicarPermBotoes($('#modal'));
+  $('#excluirVenc')?.addEventListener('click', async ()=>{ if(!confirm('Excluir este vencimento? Será inativado, mantendo o histórico.')) return; await inativarVencimento(v.id); closeModal(); });
+
+  $('#salvarVenc').onclick = async ()=>{
+    const titulo=$('#v_tit').value.trim();
+    const data=$('#v_data').value;
+    if(!titulo){ toast('Informe o título.', true); return; }
+    if(!data){ toast('Informe a data de vencimento.', true); return; }
+    const num=x=>{ x=(x??'').toString().trim(); return x===''?null:Number(x); };
+    const payload={
+      tenant_id: ctx.tenantId, titulo, categoria:$('#v_cat').value,
+      data_vencimento:data, recorrencia:$('#v_rec').value,
+      valor:num($('#v_valor').value),
+      ativo_id:$('#v_ativo').value||null, pessoa_id:$('#v_pessoa').value||null,
+      status:$('#v_status').value, data_cumprimento:$('#v_dcump').value||null,
+      observacoes:$('#v_obs').value.trim()||null
+    };
+    const btn=$('#salvarVenc'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error } = ed
+      ? await sb.from('pat_vencimentos').update(payload).eq('id', v.id).eq('tenant_id', ctx.tenantId)
+      : await sb.from('pat_vencimentos').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message, true); return; }
+    toast(ed?'Vencimento atualizado':'Vencimento cadastrado'); closeModal(); telaVencimentos();
+  };
+}
+
+async function inativarVencimento(id){
+  const { error } = await sb.from('pat_vencimentos').update({ ativo:false }).eq('id', id).eq('tenant_id', ctx.tenantId);
+  if(error){ toast(error.message, true); return; }
+  toast('Vencimento excluído'); telaVencimentos();
+}
+
+// ============================================================
+// 2.6 GESTÃO DOCUMENTAL / GED  (módulo 'ged')
+// ============================================================
+const GED_BUCKET='pat-documentos';
+let _gedDocs=[];
+let _gedListas={ativo:[],pessoa:[],onus:[],vencimento:[]};
+let _gedMaps={ativo:{},pessoa:{},onus:{},vencimento:{}};
+
+function fmtBytes(n){ if(n==null) return '—'; n=Number(n); if(isNaN(n)) return '—'; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+
+async function telaGED(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>Gestão Documental</h1><p>Documentos vinculados a ativos, pessoas, ônus e vencimentos.</p></div></div>
+    <div class="card" id="gedUp" data-perm="ged:criar" style="padding:18px;margin-bottom:18px">
+      <b style="font-family:'Playfair Display',serif;color:var(--azul-esc);font-size:15px">Adicionar documento</b>
+      <div class="grid2" style="margin-top:12px">
+        <div class="field"><label>Vincular a</label><select id="g_tipo">
+          <option value="geral">Geral (sem vínculo)</option>
+          <option value="ativo">Ativo</option><option value="pessoa">Pessoa</option>
+          <option value="onus">Ônus</option><option value="vencimento">Vencimento</option></select></div>
+        <div class="field" id="g_entWrap" style="display:none"><label>Item</label><select id="g_ent"><option value="">—</option></select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Categoria</label><input id="g_cat" placeholder="ex.: Matrícula, Contrato, RG, Escritura…"></div>
+        <div class="field"><label>Arquivo</label><input id="g_file" type="file"></div>
+      </div>
+      <button class="btn btn-primary" id="g_enviar" style="width:auto">Enviar documento</button>
+      <span id="g_prog" style="margin-left:12px;color:var(--texto-2);font-size:13px"></span>
+    </div>
+    <div class="toolbar"><input class="busca" id="buscaGed" placeholder="Buscar por nome ou categoria…"></div>
+    <div class="card" id="gedCard"><div class="skeleton">Carregando…</div></div>`;
+  aplicarPermBotoes(c);
+
+  const [{data:at},{data:pe},{data:on},{data:ve}] = await Promise.all([
+    sb.from('pat_ativos').select('id,descricao,ativo').eq('tenant_id',ctx.tenantId).order('descricao'),
+    sb.from('pat_pessoas').select('id,nome,ativo').eq('tenant_id',ctx.tenantId).order('nome'),
+    sb.from('pat_onus').select('id,tipo, ativo_rel:pat_ativos!ativo_id(descricao)').eq('tenant_id',ctx.tenantId).eq('ativo',true),
+    sb.from('pat_vencimentos').select('id,titulo,ativo').eq('tenant_id',ctx.tenantId)
+  ]);
+  _gedListas.ativo=(at||[]).filter(x=>x.ativo!==false).map(x=>({id:x.id,label:x.descricao}));
+  _gedListas.pessoa=(pe||[]).filter(x=>x.ativo!==false).map(x=>({id:x.id,label:x.nome}));
+  _gedListas.onus=(on||[]).map(x=>({id:x.id,label:(TIPO_ONUS_MAP[x.tipo]||x.tipo)+(x.ativo_rel?.descricao?' · '+x.ativo_rel.descricao:'')}));
+  _gedListas.vencimento=(ve||[]).filter(x=>x.ativo!==false).map(x=>({id:x.id,label:x.titulo}));
+  ['ativo','pessoa','onus','vencimento'].forEach(t=>{ _gedMaps[t]={}; _gedListas[t].forEach(x=>_gedMaps[t][x.id]=x.label); });
+
+  $('#g_tipo').onchange=()=>{
+    const t=$('#g_tipo').value;
+    if(t==='geral'){ $('#g_entWrap').style.display='none'; }
+    else { $('#g_entWrap').style.display='block'; $('#g_ent').innerHTML='<option value="">—</option>'+_gedListas[t].map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join(''); }
+  };
+  $('#g_enviar').onclick=enviarDoc;
+
+  await carregarDocs();
+  $('#buscaGed').oninput=()=>renderGed();
+}
+
+async function carregarDocs(){
+  const { data, error } = await sb.from('pat_documentos').select('*').eq('tenant_id',ctx.tenantId).eq('ativo',true).order('created_at',{ascending:false});
+  if(error){ $('#gedCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _gedDocs=data||[]; renderGed();
+}
+
+function vinculoLabel(d){
+  if(d.vinculo_tipo==='geral'||!d.vinculo_id) return 'Geral';
+  const nome=(_gedMaps[d.vinculo_tipo]||{})[d.vinculo_id]||'(item)';
+  const tipoL={ativo:'Ativo',pessoa:'Pessoa',onus:'Ônus',vencimento:'Vencimento',societario:'Societário'}[d.vinculo_tipo]||d.vinculo_tipo;
+  return `${tipoL}: ${nome}`;
+}
+
+function renderGed(){
+  const card=$('#gedCard'); const q=($('#buscaGed')?.value||'').toLowerCase().trim();
+  let lista=_gedDocs;
+  if(q) lista=lista.filter(d=>(d.nome||'').toLowerCase().includes(q)||(d.categoria||'').toLowerCase().includes(q));
+  if(!lista.length){ card.innerHTML=`<div class="empty"><b>Nenhum documento</b>Envie o primeiro documento desta empresa.</div>`; return; }
+  card.innerHTML=`<table><thead><tr><th>Documento</th><th>Categoria</th><th>Vínculo</th><th class="num">Tamanho</th><th>Data</th><th></th></tr></thead><tbody>
+    ${lista.map(d=>`<tr>
+      <td><b>${esc(d.nome)}</b></td>
+      <td>${esc(d.categoria)||'—'}</td>
+      <td>${esc(vinculoLabel(d))}</td>
+      <td class="num">${fmtBytes(d.tamanho)}</td>
+      <td>${fmtData(d.created_at)}</td>
+      <td><div class="row-actions">
+        <button class="btn btn-sm btn-ghost" onclick="baixarDoc('${d.id}')">Baixar</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-perm="ged:excluir" onclick="inativarDoc('${d.id}')">Excluir</button>
+      </div></td></tr>`).join('')}
+  </tbody></table>`;
+  aplicarPermBotoes(card);
+}
+
+async function enviarDoc(){
+  const file=$('#g_file').files[0];
+  if(!file){ toast('Selecione um arquivo.', true); return; }
+  const tipo=$('#g_tipo').value;
+  const vinc_id = tipo==='geral' ? null : ($('#g_ent').value||null);
+  if(tipo!=='geral' && !vinc_id){ toast('Selecione o item para vincular.', true); return; }
+  const btn=$('#g_enviar'), prog=$('#g_prog'); btn.disabled=true; prog.textContent='Enviando…';
+  const docId=crypto.randomUUID();
+  const safe=file.name.replace(/[^\w.\-]+/g,'_');
+  const path=`${ctx.tenantId}/${docId}/${safe}`;
+  const { error: upErr } = await sb.storage.from(GED_BUCKET).upload(path, file, { upsert:false, contentType:file.type||undefined });
+  if(upErr){ btn.disabled=false; prog.textContent=''; toast('Falha no upload: '+upErr.message, true); return; }
+  const { error: metaErr } = await sb.from('pat_documentos').insert({
+    id:docId, tenant_id:ctx.tenantId, vinculo_tipo:tipo, vinculo_id:vinc_id,
+    nome:file.name, categoria:$('#g_cat').value.trim()||null,
+    storage_path:path, mime:file.type||null, tamanho:file.size
+  });
+  btn.disabled=false; prog.textContent='';
+  if(metaErr){ await sb.storage.from(GED_BUCKET).remove([path]); toast(metaErr.message, true); return; }
+  toast('Documento enviado'); $('#g_file').value=''; $('#g_cat').value='';
+  await carregarDocs();
+}
+
+async function baixarDoc(id){
+  const d=_gedDocs.find(x=>x.id===id); if(!d) return;
+  const { data, error } = await sb.storage.from(GED_BUCKET).createSignedUrl(d.storage_path, 120);
+  if(error){ toast(error.message, true); return; }
+  window.open(data.signedUrl, '_blank');
+}
+
+async function inativarDoc(id){
+  if(!confirm('Excluir este documento? Será inativado (o arquivo é mantido para auditoria).')) return;
+  const { error } = await sb.from('pat_documentos').update({ativo:false}).eq('id',id).eq('tenant_id',ctx.tenantId);
+  if(error){ toast(error.message, true); return; }
+  toast('Documento excluído'); await carregarDocs();
+}
+
 // expõe handlers usados em onclick inline
 window.formEmpresa=formEmpresa; window.toggleEmpresa=toggleEmpresa;
 window.formUsuario=formUsuario; window.formNovoUsuario=formNovoUsuario; window.toggleUsuario=toggleUsuario;
@@ -1410,10 +1723,12 @@ window.formPessoa=formPessoa; window.inativarPessoa=inativarPessoa;
 window.formAtivo=formAtivo; window.inativarAtivo=inativarAtivo;
 window.formParticipacao=formParticipacao; window.inativarParticipacao=inativarParticipacao;
 window.formOnus=formOnus; window.inativarOnus=inativarOnus;
+window.formVencimento=formVencimento; window.inativarVencimento=inativarVencimento;
+window.baixarDoc=baixarDoc; window.inativarDoc=inativarDoc;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.09a (Fase 3: Ônus e Direitos Reais)');
+console.log('Patrimonial Artecon — app-shell · build 2026.11a (Fase 5: GED / Documentos)');
 </script>
 </body>
 </html>
