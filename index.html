@@ -155,7 +155,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
     <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button class="btn btn-primary" id="btnLogin">Entrar</button>
-    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.07a</p>
+    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.07c</p>
   </div>
 </div>
 
@@ -972,11 +972,32 @@ function formAtivo(id){
         <div class="field"><label>Data da avaliação</label><input id="a_dav" type="date" value="${esc((a.data_avaliacao||'').slice(0,10))}"></div>
       </div>
       <div style="border-top:1px solid var(--linha);margin:6px 0 14px"></div>
+      <div class="nav-label" style="padding:0;margin-bottom:10px">Integralização (origem do bem)</div>
+      <div class="grid2">
+        <div class="field"><label>Integralizado por</label><select id="a_integr"><option value="">—</option>
+          ${_pessoasParaSelect.map(x=>`<option value="${x.id}" ${a.integralizado_por_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select></div>
+        <div class="field"><label>Valor da integralização</label><input id="a_vintegr" type="number" step="0.01" value="${a.valor_integralizacao??''}"></div>
+      </div>
+      <div class="field"><label>Data da integralização</label><input id="a_dintegr" type="date" value="${esc((a.data_integralizacao||'').slice(0,10))}"></div>
+      <div style="border-top:1px solid var(--linha);margin:6px 0 14px"></div>
       <div id="a_detalhes">${detalhesCampos(tipo, a.detalhes)}</div>
       <div class="field"><label>Observações</label><input id="a_obs" value="${esc(a.observacoes)}"></div>
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    <div class="modal-foot">
+      ${ed ? (a.ativo!==false
+        ? `<button class="btn btn-ghost btn-danger" data-perm="patrimonio:excluir" id="excluirAtivo" style="margin-right:auto">Excluir ativo</button>`
+        : `<button class="btn btn-ghost" data-perm="patrimonio:editar" id="reativarAtivo" style="margin-right:auto">Reativar</button>`) : ''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-primary" id="salvarAtivo">Salvar</button></div>`);
+
+  aplicarPermBotoes($('#modal'));
+  $('#excluirAtivo')?.addEventListener('click', async ()=>{
+    if(!confirm('Excluir este ativo? Ele será inativado e sai das listagens, mantendo o histórico para auditoria.')) return;
+    await inativarAtivo(a.id, true); closeModal();
+  });
+  $('#reativarAtivo')?.addEventListener('click', async ()=>{
+    await inativarAtivo(a.id, false); closeModal();
+  });
 
   $('#a_tipo').onchange = ()=>{ $('#a_detalhes').innerHTML = detalhesCampos($('#a_tipo').value, {}); };
 
@@ -994,6 +1015,9 @@ function formAtivo(id){
       valor_atual: num($('#a_vat').value),
       data_avaliacao: $('#a_dav').value||null,
       situacao: $('#a_sit').value||'ativo',
+      integralizado_por_id: $('#a_integr').value||null,
+      valor_integralizacao: num($('#a_vintegr').value),
+      data_integralizacao: $('#a_dintegr').value||null,
       detalhes: coletaDetalhes(t),
       observacoes: $('#a_obs').value.trim()||null
     };
@@ -1021,7 +1045,7 @@ window.formAtivo=formAtivo; window.inativarAtivo=inativarAtivo;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.07a (Fase 1: Pessoas e Ativos)');
+console.log('Patrimonial Artecon — app-shell · build 2026.07c (ativos + integralização)');
 </script>
 </body>
 </html>
