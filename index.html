@@ -148,6 +148,7 @@ tr:hover td{background:#fafcfe}
     <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
     <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button class="btn btn-primary" id="btnLogin">Entrar</button>
+    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.06c</p>
   </div>
 </div>
 
@@ -170,9 +171,9 @@ tr:hover td{background:#fafcfe}
   <div class="shell">
     <aside class="sidebar" id="sidebar">
       <div class="nav-label">Administração</div>
-      <button class="nav-item" data-route="empresas"><span class="ic">&#127970;</span> Empresas</button>
-      <button class="nav-item" data-route="usuarios"><span class="ic">&#128100;</span> Usuários</button>
-      <button class="nav-item" data-route="acessos"><span class="ic">&#128273;</span> Acessos</button>
+      <button class="nav-item" data-route="empresas" data-modulo="admin"><span class="ic">&#127970;</span> Empresas</button>
+      <button class="nav-item" data-route="usuarios" data-modulo="admin"><span class="ic">&#128100;</span> Usuários</button>
+      <button class="nav-item" data-route="acessos" data-modulo="admin"><span class="ic">&#128273;</span> Acessos</button>
     </aside>
 
     <main class="content" id="content"><div class="skeleton">Carregando…</div></main>
@@ -213,7 +214,7 @@ const PERM_MODELO = {
 };
 
 // Estado da sessão
-const ctx = { user:null, perfil:null, superadmin:false, tenants:[], tenantId:null, role:null };
+const ctx = { user:null, perfil:null, superadmin:false, tenants:[], tenantId:null, role:null, perms:{} };
 
 // ---------- Utilidades ----------
 const $ = s => document.querySelector(s);
@@ -224,6 +225,48 @@ function toast(msg, erro){
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function iniciais(nome){ return (nome||'?').trim().split(/\s+/).slice(0,2).map(p=>p[0]).join('').toUpperCase(); }
 function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
+
+// ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
+// rota -> módulo. Administração exige admin; demais telas usam a matriz.
+const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin' };
+
+async function carregarPermissoes(tenantId){
+  ctx.perms = {};
+  if(!tenantId || ctx.superadmin) return;          // superadmin não depende da matriz
+  const { data } = await sb.from('pat_permissoes')
+    .select('modulo,pode_ver,pode_criar,pode_editar,pode_excluir')
+    .eq('usuario_id', ctx.user.id).eq('tenant_id', tenantId);
+  (data||[]).forEach(p=>{ ctx.perms[p.modulo] = p; });
+}
+
+// pode(modulo, acao): admin -> tudo; linha explícita na matriz -> usa a linha;
+// senão herda o padrão do tipo (PERM_MODELO). Mesma ordem do pat_pode().
+function pode(modulo, acao){
+  if(ctx.superadmin || ctx.role === 'admin') return true;
+  const p = ctx.perms[modulo];
+  if(p) return !!p['pode_'+acao];                  // linha explícita configurada na tela Acessos
+  const modelo = PERM_MODELO[ctx.role];            // operador / externo
+  if(!modelo) return false;
+  return !!modelo(modulo)[acao];
+}
+
+function podeRota(r){
+  const mod = ROUTE_MOD[r] || 'admin';
+  return mod === 'admin' ? podeAdmin() : pode(mod, 'ver');
+}
+
+function primeiraRotaVisivel(){
+  const vis = [...document.querySelectorAll('.nav-item')].find(n=>!n.classList.contains('hidden'));
+  return vis ? vis.dataset.route : null;
+}
+
+// esconde elementos marcados com data-perm="modulo:acao" conforme pode()
+function aplicarPermBotoes(scope){
+  (scope||document).querySelectorAll('[data-perm]').forEach(el=>{
+    const [mod, acao] = (el.dataset.perm||'').split(':');
+    el.classList.toggle('hidden', !pode(mod, acao));
+  });
+}
 
 function openModal(html){ $('#modal').innerHTML = html; $('#modalBg').classList.add('show'); }
 function closeModal(){ $('#modalBg').classList.remove('show'); $('#modal').innerHTML=''; }
@@ -286,6 +329,7 @@ async function carregarContexto(){
   ctx.tenants = tenants;
   ctx.tenantId = tenants[0]?.id || null;
   ctx.role = tenants[0]?.role || (ctx.superadmin ? 'admin' : null);
+  await carregarPermissoes(ctx.tenantId);
 }
 
 function iniciarApp(){
@@ -297,9 +341,10 @@ function iniciarApp(){
   const sel = $('#tenantSel');
   sel.innerHTML = ctx.tenants.map(t=>`<option value="${t.id}">${esc(t.nome)}</option>`).join('');
   sel.value = ctx.tenantId;
-  sel.onchange = ()=>{
+  sel.onchange = async ()=>{
     ctx.tenantId = sel.value;
     ctx.role = ctx.tenants.find(t=>t.id===sel.value)?.role || (ctx.superadmin?'admin':null);
+    await carregarPermissoes(ctx.tenantId);
     aplicarPermissoes(); rota();
   };
   aplicarPermissoes();
@@ -315,11 +360,13 @@ $('#btnSair').addEventListener('click', async ()=>{
 // PERMISSÕES (aplicar por papel)
 // ============================================================
 function aplicarPermissoes(){
-  const admin = podeAdmin();
-  // estas três telas são administrativas
+  // nav: administração exige admin; demais módulos seguem a matriz (pode)
   document.querySelectorAll('.nav-item').forEach(n=>{
-    n.classList.toggle('hidden', !admin);
+    const mod = n.dataset.modulo;
+    const visivel = (mod === 'admin') ? podeAdmin() : pode(mod, 'ver');
+    n.classList.toggle('hidden', !visivel);
   });
+  aplicarPermBotoes(document);
 }
 
 // ============================================================
@@ -333,9 +380,9 @@ document.querySelectorAll('.nav-item').forEach(n=>{
 window.addEventListener('hashchange', rota);
 
 function rota(){
-  const r = (location.hash.replace('#','') || 'empresas');
+  const r = (location.hash.replace('#','') || primeiraRotaVisivel() || 'empresas');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.route===r));
-  if(!podeAdmin()){ return semAcesso(); }
+  if(!podeRota(r)){ return semAcesso(); }
   if(r==='empresas') telaEmpresas();
   else if(r==='usuarios') telaUsuarios();
   else if(r==='acessos') telaAcessos();
@@ -627,7 +674,7 @@ window.formUsuario=formUsuario; window.formNovoUsuario=formNovoUsuario; window.t
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell Fase 0 · build 2026.06b');
+console.log('Patrimonial Artecon — app-shell · build 2026.06c (wiring permissões por empresa)');
 </script>
 </body>
 </html>
