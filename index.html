@@ -91,6 +91,13 @@ tr:hover td{background:#fafcfe}
 .row-actions{display:flex;gap:6px;justify-content:flex-end}
 .empty{padding:48px 24px;text-align:center;color:var(--texto-3)}
 .empty b{display:block;color:var(--texto-2);font-size:16px;margin-bottom:4px;font-family:'Playfair Display',serif}
+.toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+.toolbar input.busca{flex:1;min-width:200px;max-width:360px;padding:10px 13px;border:1.5px solid var(--linha);border-radius:8px;background:#fbfcfd}
+.toolbar input.busca:focus{outline:none;border-color:var(--azul-cla);box-shadow:0 0 0 3px var(--azul-tint)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.badge.pf{background:#eaf3fb;color:var(--azul-esc)}
+.badge.pj{background:#f3eafb;color:#6b3fa0}
+.badge.sit{background:#fff4e5;color:var(--aviso);text-transform:capitalize}
 
 /* ---------- Modal ---------- */
 .modal-bg{position:fixed;inset:0;background:rgba(15,30,45,.45);display:none;place-items:center;z-index:40;padding:20px;backdrop-filter:blur(2px)}
@@ -148,7 +155,7 @@ tr:hover td{background:#fafcfe}
     <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
     <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button class="btn btn-primary" id="btnLogin">Entrar</button>
-    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.06c</p>
+    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.07a</p>
   </div>
 </div>
 
@@ -170,7 +177,10 @@ tr:hover td{background:#fafcfe}
 
   <div class="shell">
     <aside class="sidebar" id="sidebar">
-      <div class="nav-label">Administração</div>
+      <div class="nav-label">Cadastros</div>
+      <button class="nav-item" data-route="pessoas" data-modulo="pessoas"><span class="ic">&#128101;</span> Pessoas</button>
+      <button class="nav-item" data-route="ativos" data-modulo="patrimonio"><span class="ic">&#128188;</span> Ativos</button>
+      <div class="nav-label" style="margin-top:14px">Administração</div>
       <button class="nav-item" data-route="empresas" data-modulo="admin"><span class="ic">&#127970;</span> Empresas</button>
       <button class="nav-item" data-route="usuarios" data-modulo="admin"><span class="ic">&#128100;</span> Usuários</button>
       <button class="nav-item" data-route="acessos" data-modulo="admin"><span class="ic">&#128273;</span> Acessos</button>
@@ -213,6 +223,12 @@ const PERM_MODELO = {
   externo:  m  => ({ver:['bi','portal','patrimonio'].includes(m), criar:false, editar:false, excluir:false})
 };
 
+// Listas de domínio (Fase 1)
+const TIPO_ATIVO = { imovel:'Imóvel', veiculo:'Veículo', participacao:'Participação societária', aplicacao:'Aplicação financeira', outro:'Outro' };
+const ESTADO_CIVIL = [['solteiro','Solteiro(a)'],['casado','Casado(a)'],['uniao_estavel','União estável'],['divorciado','Divorciado(a)'],['viuvo','Viúvo(a)'],['separado','Separado(a)']];
+const REGIME_BENS = [['comunhao_parcial','Comunhão parcial'],['comunhao_universal','Comunhão universal'],['separacao_total','Separação total'],['separacao_obrigatoria','Separação obrigatória'],['participacao_final','Participação final nos aquestos'],['nao_se_aplica','Não se aplica']];
+const SITUACAO_ATIVO = [['ativo','Ativo'],['alienado','Alienado'],['baixado','Baixado'],['onerado','Onerado']];
+
 // Estado da sessão
 const ctx = { user:null, perfil:null, superadmin:false, tenants:[], tenantId:null, role:null, perms:{} };
 
@@ -224,11 +240,13 @@ function toast(msg, erro){
 }
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function iniciais(nome){ return (nome||'?').trim().split(/\s+/).slice(0,2).map(p=>p[0]).join('').toUpperCase(); }
+function fmtMoeda(v){ if(v==null||v==='') return '—'; const n=Number(v); return isNaN(n)?'—':n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+function fmtData(v){ if(!v) return '—'; const s=String(v).slice(0,10).split('-'); return s.length===3?`${s[2]}/${s[1]}/${s[0]}`:'—'; }
 function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
 
 // ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
 // rota -> módulo. Administração exige admin; demais telas usam a matriz.
-const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin' };
+const ROUTE_MOD = { empresas:'admin', usuarios:'admin', acessos:'admin', pessoas:'pessoas', ativos:'patrimonio' };
 
 async function carregarPermissoes(tenantId){
   ctx.perms = {};
@@ -380,13 +398,15 @@ document.querySelectorAll('.nav-item').forEach(n=>{
 window.addEventListener('hashchange', rota);
 
 function rota(){
-  const r = (location.hash.replace('#','') || primeiraRotaVisivel() || 'empresas');
+  const r = (location.hash.replace('#','') || primeiraRotaVisivel() || '');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.route===r));
-  if(!podeRota(r)){ return semAcesso(); }
+  if(!r || !podeRota(r)){ return semAcesso(); }
   if(r==='empresas') telaEmpresas();
   else if(r==='usuarios') telaUsuarios();
   else if(r==='acessos') telaAcessos();
-  else telaEmpresas();
+  else if(r==='pessoas') telaPessoas();
+  else if(r==='ativos') telaAtivos();
+  else semAcesso();
 }
 
 function semAcesso(){
@@ -668,13 +688,340 @@ async function matrizPermissoes(uid){
   };
 }
 
+// ============================================================
+// 2.1 PESSOAS  (módulo 'pessoas')
+// ============================================================
+let _pessoasCache = [];
+
+async function telaPessoas(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>Pessoas</h1><p>Pessoas físicas e jurídicas vinculadas ao patrimônio.</p></div>
+    <button class="btn btn-primary" data-perm="pessoas:criar" id="novaPessoa">+ Nova pessoa</button></div>
+    <div class="toolbar"><input class="busca" id="buscaPessoa" placeholder="Buscar por nome ou documento…"></div>
+    <div class="card" id="pesCard"><div class="skeleton">Carregando…</div></div>`;
+  aplicarPermBotoes(c);
+  $('#novaPessoa')?.addEventListener('click', ()=>formPessoa());
+
+  const { data, error } = await sb.from('pat_pessoas').select('*').eq('tenant_id', ctx.tenantId).order('nome');
+  if(error){ $('#pesCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _pessoasCache = data||[];
+  renderPessoas(_pessoasCache);
+  $('#buscaPessoa').oninput = e=>{
+    const q=e.target.value.toLowerCase().trim();
+    renderPessoas(_pessoasCache.filter(p=>(p.nome||'').toLowerCase().includes(q)||(p.cpf_cnpj||'').toLowerCase().includes(q)));
+  };
+}
+
+function renderPessoas(lista){
+  const card=$('#pesCard');
+  if(!lista.length){ card.innerHTML=`<div class="empty"><b>Nenhuma pessoa</b>Cadastre a primeira pessoa desta empresa.</div>`; return; }
+  card.innerHTML=`<table><thead><tr><th>Nome</th><th>Tipo</th><th>Documento</th><th>Município/UF</th><th>Status</th><th></th></tr></thead><tbody>
+    ${lista.map(p=>`<tr>
+      <td><b>${esc(p.nome)}</b>${p.nome_fantasia?`<br><small style="color:var(--texto-3)">${esc(p.nome_fantasia)}</small>`:''}</td>
+      <td><span class="badge ${p.tipo_pessoa==='PJ'?'pj':'pf'}">${esc(p.tipo_pessoa)}</span></td>
+      <td>${esc(p.cpf_cnpj)||'—'}</td>
+      <td>${esc(p.municipio)||'—'}${p.uf?'/'+esc(p.uf):''}</td>
+      <td><span class="badge ${p.ativo?'ativo':'inativo'}">${p.ativo?'Ativo':'Inativo'}</span></td>
+      <td><div class="row-actions">
+        <button class="btn btn-sm btn-ghost" data-perm="pessoas:editar" onclick="formPessoa('${p.id}')">Editar</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-perm="pessoas:excluir" onclick="inativarPessoa('${p.id}',${p.ativo})">${p.ativo?'Inativar':'Reativar'}</button>
+      </div></td></tr>`).join('')}
+  </tbody></table>`;
+  aplicarPermBotoes(card);
+}
+
+function formPessoa(id){
+  const p = id ? (_pessoasCache.find(x=>x.id===id)||{}) : {};
+  const ed = !!p.id;
+  const tipo = p.tipo_pessoa || 'PF';
+  const pfList = _pessoasCache.filter(x=>x.tipo_pessoa==='PF' && x.id!==p.id && x.ativo!==false);
+  openModal(`
+    <div class="modal-head"><h2>${ed?'Editar pessoa':'Nova pessoa'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Tipo de pessoa *</label><select id="p_tipo">
+        <option value="PF" ${tipo==='PF'?'selected':''}>Pessoa Física</option>
+        <option value="PJ" ${tipo==='PJ'?'selected':''}>Pessoa Jurídica</option>
+      </select></div>
+
+      <div class="field"><label id="lbl_nome">${tipo==='PJ'?'Razão social *':'Nome completo *'}</label><input id="p_nome" value="${esc(p.nome)}"></div>
+
+      <div id="pf_fantasia_wrap" class="field ${tipo==='PJ'?'':'hidden'}"><label>Nome fantasia</label><input id="p_fantasia" value="${esc(p.nome_fantasia)}"></div>
+
+      <div class="grid2">
+        <div class="field"><label id="lbl_doc">${tipo==='PJ'?'CNPJ':'CPF'}</label><input id="p_doc" value="${esc(p.cpf_cnpj)}"></div>
+        <div class="field"><label id="lbl_rgie">${tipo==='PJ'?'Inscrição Estadual':'RG'}</label><input id="p_rgie" value="${esc(p.rg_ie)}"></div>
+      </div>
+
+      <div id="bloco_pf" class="${tipo==='PF'?'':'hidden'}">
+        <div class="grid2">
+          <div class="field"><label>Data de nascimento</label><input id="p_nasc" type="date" value="${esc((p.data_nascimento||'').slice(0,10))}"></div>
+          <div class="field"><label>Profissão</label><input id="p_prof" value="${esc(p.profissao)}"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Estado civil</label><select id="p_ecivil"><option value="">—</option>
+            ${ESTADO_CIVIL.map(([v,l])=>`<option value="${v}" ${p.estado_civil===v?'selected':''}>${l}</option>`).join('')}</select></div>
+          <div class="field"><label>Regime de bens</label><select id="p_regime"><option value="">—</option>
+            ${REGIME_BENS.map(([v,l])=>`<option value="${v}" ${p.regime_bens===v?'selected':''}>${l}</option>`).join('')}</select></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Cônjuge</label><select id="p_conjuge"><option value="">—</option>
+            ${pfList.map(x=>`<option value="${x.id}" ${p.conjuge_id===x.id?'selected':''}>${esc(x.nome)}</option>`).join('')}</select></div>
+          <div class="field"><label>Naturalidade</label><input id="p_natural" value="${esc(p.naturalidade)}"></div>
+        </div>
+      </div>
+
+      <div id="bloco_pj" class="${tipo==='PJ'?'':'hidden'}">
+        <div class="field"><label>Data de constituição</label><input id="p_const" type="date" value="${esc((p.data_constituicao||'').slice(0,10))}"></div>
+      </div>
+
+      <div class="grid2">
+        <div class="field"><label>Nacionalidade</label><input id="p_nacion" value="${esc(p.nacionalidade||'Brasileira')}"></div>
+        <div class="field"><label>Telefone</label><input id="p_tel" value="${esc(p.telefone)}"></div>
+      </div>
+      <div class="field"><label>E-mail</label><input id="p_email" type="email" value="${esc(p.email)}"></div>
+
+      <div class="grid2">
+        <div class="field"><label>CEP</label><input id="p_cep" value="${esc(p.cep)}"></div>
+        <div class="field"><label>Logradouro</label><input id="p_logr" value="${esc(p.logradouro)}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Número</label><input id="p_num" value="${esc(p.numero)}"></div>
+        <div class="field"><label>Complemento</label><input id="p_compl" value="${esc(p.complemento)}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Bairro</label><input id="p_bairro" value="${esc(p.bairro)}"></div>
+        <div class="field"><label>Município</label><input id="p_mun" value="${esc(p.municipio)}"></div>
+      </div>
+      <div class="field"><label>UF</label><input id="p_uf" maxlength="2" style="max-width:90px;text-transform:uppercase" value="${esc(p.uf)}"></div>
+      <div class="field"><label>Observações</label><input id="p_obs" value="${esc(p.observacoes)}"></div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="salvarPessoa">Salvar</button></div>`);
+
+  const aplicaTipo=()=>{
+    const t=$('#p_tipo').value;
+    $('#lbl_nome').textContent = t==='PJ'?'Razão social *':'Nome completo *';
+    $('#lbl_doc').textContent  = t==='PJ'?'CNPJ':'CPF';
+    $('#lbl_rgie').textContent = t==='PJ'?'Inscrição Estadual':'RG';
+    $('#pf_fantasia_wrap').classList.toggle('hidden', t!=='PJ');
+    $('#bloco_pf').classList.toggle('hidden', t!=='PF');
+    $('#bloco_pj').classList.toggle('hidden', t!=='PJ');
+  };
+  $('#p_tipo').onchange = aplicaTipo;
+
+  $('#salvarPessoa').onclick = async ()=>{
+    const t=$('#p_tipo').value;
+    const nome=$('#p_nome').value.trim();
+    if(!nome){ toast('Informe o nome / razão social.', true); return; }
+    const payload={
+      tenant_id: ctx.tenantId, tipo_pessoa:t, nome,
+      nome_fantasia: t==='PJ' ? ($('#p_fantasia').value.trim()||null) : null,
+      cpf_cnpj: $('#p_doc').value.trim()||null,
+      rg_ie: $('#p_rgie').value.trim()||null,
+      data_nascimento: t==='PF' ? ($('#p_nasc').value||null) : null,
+      data_constituicao: t==='PJ' ? ($('#p_const').value||null) : null,
+      estado_civil: t==='PF' ? ($('#p_ecivil').value||null) : null,
+      regime_bens: t==='PF' ? ($('#p_regime').value||null) : null,
+      conjuge_id: t==='PF' ? ($('#p_conjuge').value||null) : null,
+      profissao: t==='PF' ? ($('#p_prof').value.trim()||null) : null,
+      naturalidade: t==='PF' ? ($('#p_natural').value.trim()||null) : null,
+      nacionalidade: $('#p_nacion').value.trim()||null,
+      email: $('#p_email').value.trim()||null,
+      telefone: $('#p_tel').value.trim()||null,
+      cep: $('#p_cep').value.trim()||null,
+      logradouro: $('#p_logr').value.trim()||null,
+      numero: $('#p_num').value.trim()||null,
+      complemento: $('#p_compl').value.trim()||null,
+      bairro: $('#p_bairro').value.trim()||null,
+      municipio: $('#p_mun').value.trim()||null,
+      uf: $('#p_uf').value.trim().toUpperCase()||null,
+      observacoes: $('#p_obs').value.trim()||null
+    };
+    const btn=$('#salvarPessoa'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error } = ed
+      ? await sb.from('pat_pessoas').update(payload).eq('id', p.id).eq('tenant_id', ctx.tenantId)
+      : await sb.from('pat_pessoas').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message, true); return; }
+    toast(ed?'Pessoa atualizada':'Pessoa cadastrada'); closeModal(); telaPessoas();
+  };
+}
+
+async function inativarPessoa(id, ativo){
+  const { error } = await sb.from('pat_pessoas').update({ ativo: !ativo }).eq('id', id).eq('tenant_id', ctx.tenantId);
+  if(error){ toast(error.message, true); return; }
+  toast(ativo?'Pessoa inativada':'Pessoa reativada'); telaPessoas();
+}
+
+// ============================================================
+// 2.2 ATIVOS  (módulo 'patrimonio')
+// ============================================================
+let _ativosCache = [];
+let _pessoasParaSelect = [];
+
+async function telaAtivos(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>Ativos</h1><p>Bens e direitos da holding: imóveis, veículos, participações e aplicações.</p></div>
+    <button class="btn btn-primary" data-perm="patrimonio:criar" id="novoAtivo">+ Novo ativo</button></div>
+    <div class="toolbar"><input class="busca" id="buscaAtivo" placeholder="Buscar por descrição ou documento…"></div>
+    <div class="card" id="ativCard"><div class="skeleton">Carregando…</div></div>`;
+  aplicarPermBotoes(c);
+  $('#novoAtivo')?.addEventListener('click', ()=>formAtivo());
+
+  const { data: pes } = await sb.from('pat_pessoas').select('id,nome,tipo_pessoa,ativo').eq('tenant_id', ctx.tenantId).order('nome');
+  _pessoasParaSelect = (pes||[]).filter(x=>x.ativo!==false);
+
+  const { data, error } = await sb.from('pat_ativos').select('*, pat_pessoas(nome)').eq('tenant_id', ctx.tenantId).order('descricao');
+  if(error){ $('#ativCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _ativosCache = data||[];
+  renderAtivos(_ativosCache);
+  $('#buscaAtivo').oninput = e=>{
+    const q=e.target.value.toLowerCase().trim();
+    renderAtivos(_ativosCache.filter(a=>(a.descricao||'').toLowerCase().includes(q)||(a.documento||'').toLowerCase().includes(q)));
+  };
+}
+
+function renderAtivos(lista){
+  const card=$('#ativCard');
+  if(!lista.length){ card.innerHTML=`<div class="empty"><b>Nenhum ativo</b>Cadastre o primeiro bem desta empresa.</div>`; return; }
+  card.innerHTML=`<table><thead><tr><th>Descrição</th><th>Tipo</th><th>Documento</th><th>Proprietário</th><th class="num">Valor atual</th><th>Situação</th><th>Status</th><th></th></tr></thead><tbody>
+    ${lista.map(a=>`<tr>
+      <td><b>${esc(a.descricao)}</b></td>
+      <td><span class="badge role">${esc(TIPO_ATIVO[a.tipo_ativo]||a.tipo_ativo)}</span></td>
+      <td>${esc(a.documento)||'—'}</td>
+      <td>${esc(a.pat_pessoas?.nome)||'—'}</td>
+      <td class="num">${fmtMoeda(a.valor_atual)}</td>
+      <td><span class="badge sit">${esc(a.situacao)||'—'}</span></td>
+      <td><span class="badge ${a.ativo?'ativo':'inativo'}">${a.ativo?'Ativo':'Inativo'}</span></td>
+      <td><div class="row-actions">
+        <button class="btn btn-sm btn-ghost" data-perm="patrimonio:editar" onclick="formAtivo('${a.id}')">Editar</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-perm="patrimonio:excluir" onclick="inativarAtivo('${a.id}',${a.ativo})">${a.ativo?'Inativar':'Reativar'}</button>
+      </div></td></tr>`).join('')}
+  </tbody></table>`;
+  aplicarPermBotoes(card);
+}
+
+function detalhesCampos(tipo, d){
+  d=d||{};
+  if(tipo==='imovel') return `
+    <div class="grid2">
+      <div class="field"><label>Cartório / Registro</label><input id="d_cartorio" value="${esc(d.cartorio)}"></div>
+      <div class="field"><label>Inscrição municipal</label><input id="d_inscmun" value="${esc(d.inscricao_municipal)}"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Área (m²)</label><input id="d_area" value="${esc(d.area_m2)}"></div>
+      <div class="field"><label>Endereço do imóvel</label><input id="d_endereco" value="${esc(d.endereco)}"></div>
+    </div>`;
+  if(tipo==='veiculo') return `
+    <div class="grid2">
+      <div class="field"><label>RENAVAM</label><input id="d_renavam" value="${esc(d.renavam)}"></div>
+      <div class="field"><label>Marca / Modelo</label><input id="d_marca" value="${esc(d.marca_modelo)}"></div>
+    </div>
+    <div class="field"><label>Ano</label><input id="d_ano" style="max-width:120px" value="${esc(d.ano)}"></div>`;
+  if(tipo==='participacao') return `
+    <div class="grid2">
+      <div class="field"><label>Empresa / Sociedade</label><input id="d_empresa" value="${esc(d.empresa)}"></div>
+      <div class="field"><label>% de participação</label><input id="d_perc" value="${esc(d.percentual)}"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Qtde. quotas/ações</label><input id="d_qtde" value="${esc(d.quantidade)}"></div>
+      <div class="field"><label>Capital integralizado</label><input id="d_capital" value="${esc(d.capital)}"></div>
+    </div>`;
+  if(tipo==='aplicacao') return `
+    <div class="grid2">
+      <div class="field"><label>Instituição</label><input id="d_inst" value="${esc(d.instituicao)}"></div>
+      <div class="field"><label>Tipo de aplicação</label><input id="d_tipoapl" value="${esc(d.tipo_aplicacao)}"></div>
+    </div>
+    <div class="field"><label>Conta / Identificação</label><input id="d_conta" value="${esc(d.conta)}"></div>`;
+  return '<p style="font-size:13px;color:var(--texto-3)">Sem campos específicos para este tipo.</p>';
+}
+function coletaDetalhes(tipo){
+  const g=id=>{ const el=$('#'+id); return el?(el.value.trim()||null):null; };
+  if(tipo==='imovel') return { cartorio:g('d_cartorio'), inscricao_municipal:g('d_inscmun'), area_m2:g('d_area'), endereco:g('d_endereco') };
+  if(tipo==='veiculo') return { renavam:g('d_renavam'), marca_modelo:g('d_marca'), ano:g('d_ano') };
+  if(tipo==='participacao') return { empresa:g('d_empresa'), percentual:g('d_perc'), quantidade:g('d_qtde'), capital:g('d_capital') };
+  if(tipo==='aplicacao') return { instituicao:g('d_inst'), tipo_aplicacao:g('d_tipoapl'), conta:g('d_conta') };
+  return {};
+}
+
+function formAtivo(id){
+  const a = id ? (_ativosCache.find(x=>x.id===id)||{}) : {};
+  const ed = !!a.id;
+  const tipo = a.tipo_ativo || 'imovel';
+  openModal(`
+    <div class="modal-head"><h2>${ed?'Editar ativo':'Novo ativo'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field"><label>Tipo de ativo *</label><select id="a_tipo">
+          ${Object.entries(TIPO_ATIVO).map(([v,l])=>`<option value="${v}" ${tipo===v?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label>Situação</label><select id="a_sit">
+          ${SITUACAO_ATIVO.map(([v,l])=>`<option value="${v}" ${(a.situacao||'ativo')===v?'selected':''}>${l}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label>Descrição *</label><input id="a_desc" value="${esc(a.descricao)}"></div>
+      <div class="grid2">
+        <div class="field"><label>Proprietário</label><select id="a_prop"><option value="">—</option>
+          ${_pessoasParaSelect.map(x=>`<option value="${x.id}" ${a.proprietario_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select></div>
+        <div class="field"><label>Documento / Registro</label><input id="a_doc" value="${esc(a.documento)}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Valor de aquisição</label><input id="a_vaq" type="number" step="0.01" value="${a.valor_aquisicao??''}"></div>
+        <div class="field"><label>Data de aquisição</label><input id="a_daq" type="date" value="${esc((a.data_aquisicao||'').slice(0,10))}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Valor atual</label><input id="a_vat" type="number" step="0.01" value="${a.valor_atual??''}"></div>
+        <div class="field"><label>Data da avaliação</label><input id="a_dav" type="date" value="${esc((a.data_avaliacao||'').slice(0,10))}"></div>
+      </div>
+      <div style="border-top:1px solid var(--linha);margin:6px 0 14px"></div>
+      <div id="a_detalhes">${detalhesCampos(tipo, a.detalhes)}</div>
+      <div class="field"><label>Observações</label><input id="a_obs" value="${esc(a.observacoes)}"></div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="salvarAtivo">Salvar</button></div>`);
+
+  $('#a_tipo').onchange = ()=>{ $('#a_detalhes').innerHTML = detalhesCampos($('#a_tipo').value, {}); };
+
+  $('#salvarAtivo').onclick = async ()=>{
+    const t=$('#a_tipo').value;
+    const desc=$('#a_desc').value.trim();
+    if(!desc){ toast('Informe a descrição.', true); return; }
+    const num=v=>{ v=(v??'').toString().trim(); return v===''?null:Number(v); };
+    const payload={
+      tenant_id: ctx.tenantId, tipo_ativo:t, descricao:desc,
+      proprietario_id: $('#a_prop').value||null,
+      documento: $('#a_doc').value.trim()||null,
+      valor_aquisicao: num($('#a_vaq').value),
+      data_aquisicao: $('#a_daq').value||null,
+      valor_atual: num($('#a_vat').value),
+      data_avaliacao: $('#a_dav').value||null,
+      situacao: $('#a_sit').value||'ativo',
+      detalhes: coletaDetalhes(t),
+      observacoes: $('#a_obs').value.trim()||null
+    };
+    const btn=$('#salvarAtivo'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error } = ed
+      ? await sb.from('pat_ativos').update(payload).eq('id', a.id).eq('tenant_id', ctx.tenantId)
+      : await sb.from('pat_ativos').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message, true); return; }
+    toast(ed?'Ativo atualizado':'Ativo cadastrado'); closeModal(); telaAtivos();
+  };
+}
+
+async function inativarAtivo(id, ativo){
+  const { error } = await sb.from('pat_ativos').update({ ativo: !ativo }).eq('id', id).eq('tenant_id', ctx.tenantId);
+  if(error){ toast(error.message, true); return; }
+  toast(ativo?'Ativo inativado':'Ativo reativado'); telaAtivos();
+}
+
 // expõe handlers usados em onclick inline
 window.formEmpresa=formEmpresa; window.toggleEmpresa=toggleEmpresa;
 window.formUsuario=formUsuario; window.formNovoUsuario=formNovoUsuario; window.toggleUsuario=toggleUsuario;
+window.formPessoa=formPessoa; window.inativarPessoa=inativarPessoa;
+window.formAtivo=formAtivo; window.inativarAtivo=inativarAtivo;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.06c (wiring permissões por empresa)');
+console.log('Patrimonial Artecon — app-shell · build 2026.07a (Fase 1: Pessoas e Ativos)');
 </script>
 </body>
 </html>
