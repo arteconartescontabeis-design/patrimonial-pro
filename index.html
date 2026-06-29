@@ -146,6 +146,9 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .tab{background:none;border:none;padding:10px 16px;font-size:14px;font-weight:600;color:var(--texto-2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px}
 .tab.active{color:var(--azul);border-bottom-color:var(--azul)}
 .tab:hover{color:var(--azul-esc)}
+.hint{font-size:12px;color:var(--texto-3);margin-top:4px;line-height:1.4}
+.hint.warn{color:var(--aviso)}
+.field label .req{color:#c0392b;font-weight:700;margin-left:2px}
 
 /* ---------- Modal ---------- */
 .modal-bg{position:fixed;inset:0;background:rgba(15,30,45,.45);display:none;place-items:center;z-index:40;padding:20px;backdrop-filter:blur(2px)}
@@ -203,7 +206,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
       <button class="btn btn-primary" id="btnLogin">Entrar</button>
-      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.16c</p>
+      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.17a</p>
     </div>
   </div>
 </div>
@@ -1284,8 +1287,9 @@ function formParticipacao(id){
     <div class="modal-head"><h2>${ed?'Editar participação':'Adicionar sócio'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
     <div class="modal-body">
       <div class="field"><label>Sociedade</label><input value="${esc(socNome)}" disabled></div>
-      <div class="field"><label>Sócio *</label><select id="q_socio"><option value="">—</option>
-        ${socios.map(x=>`<option value="${x.id}" ${p.socio_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select></div>
+      <div class="field"><label>Sócio <span class="req">*</span></label><select id="q_socio"><option value="">—</option>
+        ${socios.map(x=>`<option value="${x.id}" ${p.socio_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select>
+        <div class="hint">${socios.length?'O sócio precisa estar cadastrado em <b>Pessoas</b>. Esta participação é o que permite doar quotas deste sócio depois.':'<span class="warn">Nenhuma pessoa disponível. Cadastre o sócio em Pessoas antes de adicionar a participação.</span>'}</div></div>
       <div class="grid2">
         <div class="field"><label>Tipo de título</label><select id="q_tipo">
           <option value="quota" ${(p.tipo_titulo||'quota')==='quota'?'selected':''}>Quota</option>
@@ -1294,7 +1298,7 @@ function formParticipacao(id){
       </div>
       <div class="grid2">
         <div class="field"><label>Quantidade</label><input id="q_qtde" type="number" step="0.0001" value="${p.quantidade??''}"></div>
-        <div class="field"><label>% de participação</label><input id="q_pct" type="number" step="0.0001" value="${p.percentual??''}"></div>
+        <div class="field"><label>% de participação</label><input id="q_pct" type="number" step="0.0001" value="${p.percentual??''}"><div class="hint">Recomendado: usado na conciliação do capital e na efetivação de doações de quotas.</div></div>
       </div>
       <div class="grid2">
         <div class="field"><label>Valor nominal / integralizado</label><input id="q_valor" type="number" step="0.01" value="${p.valor_nominal??''}"></div>
@@ -2070,7 +2074,7 @@ function formDoacao(id){
         <div class="field"><label>Objeto</label><select id="d_obj">${[['quota','Quotas/ações'],['ativo','Ativo (bem)'],['valor','Valor em dinheiro']].map(([k,l])=>`<option value="${k}" ${(d.objeto_tipo||'quota')===k?'selected':''}>${l}</option>`).join('')}</select></div>
         <div class="field"><label>% (se aplicável)</label><input id="d_pct" type="number" step="0.0001" value="${d.percentual??''}"></div>
       </div>
-      <div class="field" id="d_itemWrap" style="display:none"><label id="d_itemLab">Item</label><select id="d_item"><option value="">—</option></select></div>
+      <div class="field" id="d_itemWrap" style="display:none"><label id="d_itemLab">Item</label><select id="d_item"><option value="">—</option></select><div class="hint" id="d_itemHint"></div></div>
       <div class="field"><label>Descrição</label><input id="d_desc" value="${esc(d.descricao)}"></div>
       <div class="grid2">
         <div class="field"><label>Valor (base ITCMD)</label><input id="d_valor" type="number" step="0.01" value="${d.valor??''}"></div>
@@ -2109,6 +2113,19 @@ function formDoacao(id){
     if(!doador||!donat){ toast('Informe doador e donatário.',true); return; }
     const num=x=>{ x=(x??'').toString().trim(); return x===''?null:Number(x); };
     const obj=$('#d_obj').value, item=($('#d_item')?$('#d_item').value:'')||null;
+    // validações explicativas: avisa o que deixará de funcionar se faltar dado
+    if(obj==='quota' && !item){
+      if(!confirm('Sem a "Participação doada" selecionada, esta doação NÃO poderá ser efetivada na Análise % Capital (ficará como "faltam dados").\n\nDeseja salvar mesmo assim?')) return;
+    }
+    if(obj==='quota' && item && num($('#d_pct').value)==null){
+      if(!confirm('Sem o "%" preenchido, a transferência de quotas não poderá ser confirmada na Análise % Capital.\n\nDeseja salvar mesmo assim?')) return;
+    }
+    if(obj==='ativo' && !item){
+      if(!confirm('Sem o "Ativo doado" selecionado, não será gerado usufruto nem cláusulas no módulo Ônus.\n\nDeseja salvar mesmo assim?')) return;
+    }
+    if($('#d_usuf').checked && !$('#d_usufid').value){
+      if(!confirm('Você marcou "Reserva de usufruto" mas não indicou o usufrutuário.\n\nAo gerar o ônus, o usufruto será atribuído ao doador. Continuar?')) return;
+    }
     const valor=num($('#d_valor').value), aliq=num($('#d_aliq').value);
     const payload={ tenant_id:ctx.tenantId, doador_id:doador, donatario_id:donat, objeto_tipo:obj,
       participacao_id: obj==='quota'?item:null, ativo_id: obj==='ativo'?item:null,
@@ -2279,17 +2296,21 @@ function fmtDataHora(v){ if(!v) return '—'; try{ return new Date(v).toLocaleSt
 
 // preenche o select de "item" da doação conforme objeto + doador
 async function refreshDoacaoItem(d){
-  const obj=$('#d_obj').value, wrap=$('#d_itemWrap'), lab=$('#d_itemLab'), selEl=$('#d_item');
+  const obj=$('#d_obj').value, wrap=$('#d_itemWrap'), lab=$('#d_itemLab'), selEl=$('#d_item'), hint=$('#d_itemHint');
   if(!wrap) return;
   if(obj==='ativo'){
-    lab.textContent='Ativo doado'; wrap.style.display='block';
+    lab.innerHTML='Ativo doado <span class="req">*</span>'; wrap.style.display='block';
     selEl.innerHTML='<option value="">—</option>'+_ativosSuc.map(a=>`<option value="${a.id}" ${d&&d.ativo_id===a.id?'selected':''}>${esc(a.descricao)}</option>`).join('');
+    if(hint) hint.innerHTML = _ativosSuc.length ? 'Necessário para gerar usufruto/cláusulas no módulo Ônus ao salvar.' : '<span class="warn">Nenhum ativo cadastrado. Cadastre em Patrimônio → Ativos antes de doar um bem.</span>';
   } else if(obj==='quota'){
-    lab.textContent='Participação doada'; wrap.style.display='block';
+    lab.innerHTML='Participação doada <span class="req">*</span>'; wrap.style.display='block';
     const doador=$('#d_doador').value;
-    if(!doador){ selEl.innerHTML='<option value="">Selecione o doador primeiro…</option>'; return; }
+    if(!doador){ selEl.innerHTML='<option value="">Selecione o doador primeiro…</option>'; if(hint) hint.innerHTML='Selecione o doador para listar as participações dele.'; return; }
     const { data } = await sb.from('pat_participacoes').select('id, percentual, sociedade:pat_pessoas!sociedade_id(nome)').eq('tenant_id',ctx.tenantId).eq('socio_id',doador).eq('ativo',true);
     selEl.innerHTML='<option value="">—</option>'+(data||[]).map(p=>`<option value="${p.id}" ${d&&d.participacao_id===p.id?'selected':''}>${esc(p.sociedade?.nome)} · ${p.percentual!=null?Number(p.percentual).toLocaleString('pt-BR')+'%':''}</option>`).join('');
+    if(hint){ hint.innerHTML = (data&&data.length)
+      ? 'Obrigatório: sem a participação vinculada, a doação não poderá ser efetivada na <b>Análise % Capital</b>.'
+      : '<span class="warn">Este doador não possui participações na Estrutura Societária. Cadastre a participação dele antes de doar quotas.</span>'; }
   } else { wrap.style.display='none'; }
 }
 
@@ -2412,7 +2433,7 @@ window.aplicarDoacao=aplicarDoacao; window.addConjuge=addConjuge; window.audDeta
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.16c (mensagem de erro no login + Análise % Capital)');
+console.log('Patrimonial Artecon — app-shell · build 2026.17a (usabilidade: campos obrigatórios e validações explicativas)');
 </script>
 </body>
 </html>
