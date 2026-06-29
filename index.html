@@ -155,7 +155,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
     <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button class="btn btn-primary" id="btnLogin">Entrar</button>
-    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.07c</p>
+    <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.07d</p>
   </div>
 </div>
 
@@ -871,7 +871,7 @@ async function telaAtivos(){
   const { data: pes } = await sb.from('pat_pessoas').select('id,nome,tipo_pessoa,ativo').eq('tenant_id', ctx.tenantId).order('nome');
   _pessoasParaSelect = (pes||[]).filter(x=>x.ativo!==false);
 
-  const { data, error } = await sb.from('pat_ativos').select('*, pat_pessoas(nome)').eq('tenant_id', ctx.tenantId).order('descricao');
+  const { data, error } = await sb.from('pat_ativos').select('*, proprietario:pat_pessoas!proprietario_id(nome)').eq('tenant_id', ctx.tenantId).order('descricao');
   if(error){ $('#ativCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
   _ativosCache = data||[];
   renderAtivos(_ativosCache);
@@ -889,7 +889,7 @@ function renderAtivos(lista){
       <td><b>${esc(a.descricao)}</b></td>
       <td><span class="badge role">${esc(TIPO_ATIVO[a.tipo_ativo]||a.tipo_ativo)}</span></td>
       <td>${esc(a.documento)||'—'}</td>
-      <td>${esc(a.pat_pessoas?.nome)||'—'}</td>
+      <td>${esc(a.proprietario?.nome)||'—'}</td>
       <td class="num">${fmtMoeda(a.valor_atual)}</td>
       <td><span class="badge sit">${esc(a.situacao)||'—'}</span></td>
       <td><span class="badge ${a.ativo?'ativo':'inativo'}">${a.ativo?'Ativo':'Inativo'}</span></td>
@@ -1045,7 +1045,7 @@ window.formAtivo=formAtivo; window.inativarAtivo=inativarAtivo;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.07c (ativos + integralização)');
+console.log('Patrimonial Artecon — app-shell · build 2026.07d (fix embed proprietário)');
 </script>
 </body>
 </html>
