@@ -206,7 +206,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
       <button class="btn btn-primary" id="btnLogin">Entrar</button>
-      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.18b</p>
+      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.19a</p>
     </div>
   </div>
 </div>
@@ -1513,7 +1513,7 @@ function chipPrazo(d){ const n=diasPara(d); if(n==null) return '—';
 
 async function telaVencimentos(){
   const c=$('#content');
-  c.innerHTML=`<div class="page-head"><div><h1>Vencimentos</h1><p>Prazos e obrigações consolidados — inclui os vencimentos dos ônus automaticamente.</p></div>
+  c.innerHTML=`<div class="page-head"><div><h1>Vencimentos</h1><p>Prazos e obrigações consolidados — inclui automaticamente os vencimentos de ônus e de documentos (GED).</p></div>
     <button class="btn btn-primary" data-perm="vencimentos:criar" id="novoVenc">+ Novo vencimento</button></div>
     <div class="card" id="vencKpis"></div>
     <div class="toolbar" style="margin-top:18px">
@@ -1544,6 +1544,10 @@ async function telaVencimentos(){
   const { data: os } = await sb.from('pat_onus')
     .select('id,tipo,valor,data_vencimento,situacao, ativo_rel:pat_ativos!ativo_id(descricao)')
     .eq('tenant_id', ctx.tenantId).eq('ativo', true).not('data_vencimento','is',null);
+  // documentos com vencimento (GED)
+  const { data: ds } = await sb.from('pat_documentos')
+    .select('id,nome,data_vencimento, tipo_rel:pat_documento_tipos!tipo_id(nome)')
+    .eq('tenant_id', ctx.tenantId).eq('ativo', true).not('data_vencimento','is',null);
 
   const linhasManuais = _vencCache.map(v=>({
     source:'manual', id:v.id, titulo:v.titulo, categoria:CATEGORIA_VENC_MAP[v.categoria]||v.categoria,
@@ -1557,7 +1561,13 @@ async function telaVencimentos(){
     statusTxt:SITUACAO_ONUS_MAP[o.situacao]||o.situacao,
     aberto:['ativo','em_execucao','suspenso'].includes(o.situacao)
   }));
-  _vencRows = [...linhasManuais, ...linhasOnus].sort((a,b)=>String(a.data).localeCompare(String(b.data)));
+  const linhasDoc = (ds||[]).map(d=>({
+    source:'doc', id:d.id, titulo:d.nome, categoria:d.tipo_rel?.nome||'Documento',
+    vinculo:'GED', data:d.data_vencimento, valor:null,
+    statusTxt: diasPara(d.data_vencimento)<0 ? 'Vencido' : 'Vigente',
+    aberto: true
+  }));
+  _vencRows = [...linhasManuais, ...linhasOnus, ...linhasDoc].sort((a,b)=>String(a.data).localeCompare(String(b.data)));
 
   renderKpisVenc();
   $('#vencFiltro').onchange = e=>{ _vencFiltro=e.target.value; renderVenc(); };
@@ -1590,7 +1600,7 @@ function renderVenc(){
       <td>${fmtData(r.data)}</td>
       <td>${r.aberto?chipPrazo(r.data):'—'}</td>
       <td><b>${esc(r.titulo)}</b></td>
-      <td>${esc(r.categoria)}${r.source==='onus'?' <span class="badge role" style="margin-left:4px">Ônus</span>':''}</td>
+      <td>${esc(r.categoria)}${r.source==='onus'?' <span class="badge role" style="margin-left:4px">Ônus</span>':''}${r.source==='doc'?' <span class="badge role" style="margin-left:4px">GED</span>':''}</td>
       <td>${esc(r.vinculo)}</td>
       <td class="num">${fmtMoeda(r.valor)}</td>
       <td><span class="badge ${r.aberto?'sit':'inativo'}">${esc(r.statusTxt)}</span></td>
@@ -1598,7 +1608,7 @@ function renderVenc(){
         ${r.source==='manual'
           ? `<button class="btn btn-sm btn-ghost" data-perm="vencimentos:editar" onclick="formVencimento('${r.id}')">Editar</button>
              <button class="btn btn-sm btn-ghost btn-danger" data-perm="vencimentos:excluir" onclick="inativarVencimento('${r.id}')">Excluir</button>`
-          : `<span style="font-size:12px;color:var(--texto-3)">gerencie em Ônus</span>`}
+          : `<span style="font-size:12px;color:var(--texto-3)">gerencie em ${r.source==='doc'?'Documentos':'Ônus'}</span>`}
       </div></td></tr>`).join('')}
   </tbody></table>`;
   aplicarPermBotoes(card);
@@ -1676,8 +1686,22 @@ async function inativarVencimento(id){
 // ============================================================
 const GED_BUCKET='pat-documentos';
 let _gedDocs=[];
+let _gedTipos=[];           // pat_documento_tipos da empresa
+let _gedTiposMap={};        // id -> {nome, exige_vencimento, antecedencia_dias}
 let _gedListas={ativo:[],pessoa:[],onus:[],vencimento:[]};
 let _gedMaps={ativo:{},pessoa:{},onus:{},vencimento:{}};
+
+// Semáforo de vencimento do GED: usa antecedencia_dias do tipo (default 30).
+function chipDoc(d){
+  if(!d.data_vencimento) return '—';
+  const n=diasPara(d.data_vencimento);
+  if(n==null) return '—';
+  const tip=_gedTiposMap[d.tipo_id];
+  const ant=(tip&&Number.isFinite(+tip.antecedencia_dias))?+tip.antecedencia_dias:30;
+  if(n<0) return `<span class="badge venc">${Math.abs(n)}d vencido</span>`;
+  if(n<=ant) return `<span class="badge prox">faltam ${n}d</span>`;
+  return `<span class="badge fut">vigente · ${n}d</span>`;
+}
 
 function fmtBytes(n){ if(n==null) return '—'; n=Number(n); if(isNaN(n)) return '—'; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
 
@@ -1685,7 +1709,11 @@ async function telaGED(){
   const c=$('#content');
   c.innerHTML=`<div class="page-head"><div><h1>Gestão Documental</h1><p>Documentos vinculados a ativos, pessoas, ônus e vencimentos.</p></div></div>
     <div class="card" id="gedUp" data-perm="ged:criar" style="padding:18px;margin-bottom:18px">
-      <b style="font-family:'Playfair Display',serif;color:var(--azul-esc);font-size:15px">Adicionar documento</b>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <b style="font-family:'Playfair Display',serif;color:var(--azul-esc);font-size:15px">Adicionar documento</b>
+        <span style="flex:1"></span>
+        <button class="btn btn-sm btn-ghost" data-perm="ged:criar" id="g_tipos" type="button">Gerenciar tipos</button>
+      </div>
       <div class="grid2" style="margin-top:12px">
         <div class="field"><label>Vincular a</label><select id="g_tipo">
           <option value="geral">Geral (sem vínculo)</option>
@@ -1694,7 +1722,11 @@ async function telaGED(){
         <div class="field" id="g_entWrap" style="display:none"><label>Item</label><select id="g_ent"><option value="">—</option></select></div>
       </div>
       <div class="grid2">
-        <div class="field"><label>Categoria</label><input id="g_cat" placeholder="ex.: Matrícula, Contrato, RG, Escritura…"></div>
+        <div class="field"><label>Tipo de documento</label><select id="g_docTipo"><option value="">—</option></select></div>
+        <div class="field"><label>Vencimento <span id="g_vencHint" style="color:var(--texto-3);font-size:11.5px"></span></label><input id="g_venc" type="date"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Categoria (livre)</label><input id="g_cat" placeholder="ex.: Matrícula, Contrato, RG, Escritura…"></div>
         <div class="field"><label>Arquivo</label><input id="g_file" type="file"></div>
       </div>
       <button class="btn btn-primary" id="g_enviar" style="width:auto">Enviar documento</button>
@@ -1716,15 +1748,35 @@ async function telaGED(){
   _gedListas.vencimento=(ve||[]).filter(x=>x.ativo!==false).map(x=>({id:x.id,label:x.titulo}));
   ['ativo','pessoa','onus','vencimento'].forEach(t=>{ _gedMaps[t]={}; _gedListas[t].forEach(x=>_gedMaps[t][x.id]=x.label); });
 
+  await carregarTiposDoc();
+
   $('#g_tipo').onchange=()=>{
     const t=$('#g_tipo').value;
     if(t==='geral'){ $('#g_entWrap').style.display='none'; }
     else { $('#g_entWrap').style.display='block'; $('#g_ent').innerHTML='<option value="">—</option>'+_gedListas[t].map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join(''); }
   };
+  $('#g_docTipo').onchange=()=>{
+    const tip=_gedTiposMap[$('#g_docTipo').value];
+    $('#g_vencHint').textContent = (tip&&tip.exige_vencimento) ? '· obrigatório p/ este tipo' : '(opcional)';
+  };
+  $('#g_tipos').onclick=gerenciarTipos;
   $('#g_enviar').onclick=enviarDoc;
 
   await carregarDocs();
   $('#buscaGed').oninput=()=>renderGed();
+}
+
+async function carregarTiposDoc(){
+  const { data } = await sb.from('pat_documento_tipos').select('*').eq('tenant_id',ctx.tenantId).eq('ativo',true).order('nome');
+  _gedTipos = data||[];
+  _gedTiposMap={}; _gedTipos.forEach(t=>_gedTiposMap[t.id]=t);
+  const sel=$('#g_docTipo');
+  if(sel){
+    const cur=sel.value;
+    sel.innerHTML='<option value="">—</option>'+_gedTipos.map(t=>`<option value="${t.id}">${esc(t.nome)}${t.exige_vencimento?' (vence)':''}</option>`).join('');
+    if(cur) sel.value=cur;
+    $('#g_vencHint').textContent='(opcional)';
+  }
 }
 
 async function carregarDocs(){
@@ -1745,11 +1797,13 @@ function renderGed(){
   let lista=_gedDocs;
   if(q) lista=lista.filter(d=>(d.nome||'').toLowerCase().includes(q)||(d.categoria||'').toLowerCase().includes(q));
   if(!lista.length){ card.innerHTML=`<div class="empty"><b>Nenhum documento</b>Envie o primeiro documento desta empresa.</div>`; return; }
-  card.innerHTML=`<table><thead><tr><th>Documento</th><th>Categoria</th><th>Vínculo</th><th class="num">Tamanho</th><th>Data</th><th></th></tr></thead><tbody>
+  card.innerHTML=`<table><thead><tr><th>Documento</th><th>Tipo</th><th>Categoria</th><th>Vínculo</th><th>Vencimento</th><th class="num">Tamanho</th><th>Data</th><th></th></tr></thead><tbody>
     ${lista.map(d=>`<tr>
       <td><b>${esc(d.nome)}</b></td>
+      <td>${esc((_gedTiposMap[d.tipo_id]||{}).nome)||'—'}</td>
       <td>${esc(d.categoria)||'—'}</td>
       <td>${esc(vinculoLabel(d))}</td>
+      <td>${d.data_vencimento?`${fmtData(d.data_vencimento)} &nbsp;${chipDoc(d)}`:'—'}</td>
       <td class="num">${fmtBytes(d.tamanho)}</td>
       <td>${fmtData(d.created_at)}</td>
       <td><div class="row-actions">
@@ -1766,6 +1820,10 @@ async function enviarDoc(){
   const tipo=$('#g_tipo').value;
   const vinc_id = tipo==='geral' ? null : ($('#g_ent').value||null);
   if(tipo!=='geral' && !vinc_id){ toast('Selecione o item para vincular.', true); return; }
+  const tipoId=$('#g_docTipo').value||null;
+  const venc=$('#g_venc').value||null;
+  const tDef=tipoId?_gedTiposMap[tipoId]:null;
+  if(tDef && tDef.exige_vencimento && !venc){ toast(`O tipo "${tDef.nome}" exige a data de vencimento.`, true); return; }
   const btn=$('#g_enviar'), prog=$('#g_prog'); btn.disabled=true; prog.textContent='Enviando…';
   const docId=crypto.randomUUID();
   const safe=file.name.replace(/[^\w.\-]+/g,'_');
@@ -1775,11 +1833,12 @@ async function enviarDoc(){
   const { error: metaErr } = await sb.from('pat_documentos').insert({
     id:docId, tenant_id:ctx.tenantId, vinculo_tipo:tipo, vinculo_id:vinc_id,
     nome:file.name, categoria:$('#g_cat').value.trim()||null,
+    tipo_id:tipoId, data_vencimento:venc,
     storage_path:path, mime:file.type||null, tamanho:file.size
   });
   btn.disabled=false; prog.textContent='';
   if(metaErr){ await sb.storage.from(GED_BUCKET).remove([path]); toast(metaErr.message, true); return; }
-  toast('Documento enviado'); $('#g_file').value=''; $('#g_cat').value='';
+  toast('Documento enviado'); $('#g_file').value=''; $('#g_cat').value=''; $('#g_venc').value=''; $('#g_docTipo').value=''; $('#g_vencHint').textContent='(opcional)';
   await carregarDocs();
 }
 
@@ -1795,6 +1854,58 @@ async function inativarDoc(id){
   const { error } = await sb.from('pat_documentos').update({ativo:false}).eq('id',id).eq('tenant_id',ctx.tenantId);
   if(error){ toast(error.message, true); return; }
   toast('Documento excluído'); await carregarDocs();
+}
+
+// ---- Tipos de documento (parametrização por empresa) ----
+function gerenciarTipos(){
+  openModal(`
+    <div class="modal-head"><h2>Tipos de documento</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <p style="font-size:12.5px;color:var(--texto-3);margin-top:-4px;margin-bottom:12px">
+        Defina os tipos usados no GED. Marque “exige vencimento” para certidões, apólices e afins; a antecedência controla quando o semáforo fica amarelo.</p>
+      <div class="grid2">
+        <div class="field"><label>Nome do tipo *</label><input id="t_nome" placeholder="ex.: Certidão Negativa"></div>
+        <div class="field"><label>Antecedência do alerta (dias)</label><input id="t_ant" type="number" min="0" value="30"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--texto-2);margin-bottom:12px">
+        <input id="t_exige" type="checkbox"> Exige data de vencimento</label>
+      <button class="btn btn-primary btn-sm" id="t_add" style="width:auto">+ Adicionar tipo</button>
+      <div class="card" id="t_lista" style="margin-top:16px;padding:0"></div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Fechar</button></div>`);
+  renderTiposLista();
+  $('#t_add').onclick=async ()=>{
+    const nome=$('#t_nome').value.trim();
+    if(!nome){ toast('Informe o nome do tipo.', true); return; }
+    const ant=parseInt($('#t_ant').value,10); 
+    const btn=$('#t_add'); btn.disabled=true;
+    const { error } = await sb.from('pat_documento_tipos').insert({
+      tenant_id:ctx.tenantId, nome, exige_vencimento:$('#t_exige').checked,
+      antecedencia_dias: Number.isFinite(ant)&&ant>=0 ? ant : 30
+    });
+    btn.disabled=false;
+    if(error){ toast(error.message, true); return; }
+    $('#t_nome').value=''; $('#t_ant').value='30'; $('#t_exige').checked=false;
+    await carregarTiposDoc(); renderTiposLista();
+  };
+}
+function renderTiposLista(){
+  const box=$('#t_lista'); if(!box) return;
+  if(!_gedTipos.length){ box.innerHTML='<div class="empty" style="padding:18px">Nenhum tipo cadastrado ainda.</div>'; return; }
+  box.innerHTML=`<table><thead><tr><th>Tipo</th><th>Vencimento</th><th class="num">Alerta</th><th></th></tr></thead><tbody>
+    ${_gedTipos.map(t=>`<tr>
+      <td><b>${esc(t.nome)}</b></td>
+      <td>${t.exige_vencimento?'<span class="badge prox">Exige</span>':'—'}</td>
+      <td class="num">${t.antecedencia_dias}d</td>
+      <td><div class="row-actions"><button class="btn btn-sm btn-ghost btn-danger" onclick="inativarTipoDoc('${t.id}')">Remover</button></div></td>
+    </tr>`).join('')}
+  </tbody></table>`;
+}
+async function inativarTipoDoc(id){
+  if(!confirm('Remover este tipo? Documentos já existentes mantêm o vínculo.')) return;
+  const { error } = await sb.from('pat_documento_tipos').update({ativo:false}).eq('id',id).eq('tenant_id',ctx.tenantId);
+  if(error){ toast(error.message, true); return; }
+  await carregarTiposDoc(); renderTiposLista();
 }
 
 // ============================================================
@@ -1867,7 +1978,7 @@ async function telaBI(){
     sb.from('pat_participacoes').select('sociedade_id,valor_nominal').eq('tenant_id',T).eq('ativo',true),
     sb.from('pat_onus').select('valor,situacao,data_vencimento,ativo_id,tipo').eq('tenant_id',T).eq('ativo',true),
     sb.from('pat_vencimentos').select('titulo,data_vencimento,status,valor').eq('tenant_id',T).eq('ativo',true),
-    sb.from('pat_documentos').select('id').eq('tenant_id',T).eq('ativo',true)
+    sb.from('pat_documentos').select('id,nome,data_vencimento').eq('tenant_id',T).eq('ativo',true)
   ]);
   const ativos=aR.data||[], pessoas=pR.data||[], parts=prR.data||[], onus=oR.data||[], vencs=vR.data||[], docs=dR.data||[];
   const nomeMap={}; pessoas.forEach(p=>nomeMap[p.id]=p.nome);
@@ -1886,7 +1997,8 @@ async function telaBI(){
 
   const rows=[
     ...vencs.filter(v=>v.status==='pendente').map(v=>({titulo:v.titulo,data:v.data_vencimento})),
-    ...onus.filter(o=>['ativo','em_execucao','suspenso'].includes(o.situacao) && o.data_vencimento).map(o=>({titulo:(TIPO_ONUS_MAP[o.tipo]||o.tipo),data:o.data_vencimento}))
+    ...onus.filter(o=>['ativo','em_execucao','suspenso'].includes(o.situacao) && o.data_vencimento).map(o=>({titulo:(TIPO_ONUS_MAP[o.tipo]||o.tipo),data:o.data_vencimento})),
+    ...docs.filter(d=>d.data_vencimento).map(d=>({titulo:d.nome,data:d.data_vencimento}))
   ];
   const vencidos=rows.filter(r=>{const d=diasPara(r.data);return d!=null&&d<0;}).length;
   const prox30=rows.filter(r=>{const d=diasPara(r.data);return d!=null&&d>=0&&d<=30;}).length;
@@ -2747,7 +2859,7 @@ window.formAtivo=formAtivo; window.inativarAtivo=inativarAtivo;
 window.formParticipacao=formParticipacao; window.inativarParticipacao=inativarParticipacao;
 window.formOnus=formOnus; window.inativarOnus=inativarOnus;
 window.formVencimento=formVencimento; window.inativarVencimento=inativarVencimento;
-window.baixarDoc=baixarDoc; window.inativarDoc=inativarDoc;
+window.baixarDoc=baixarDoc; window.inativarDoc=inativarDoc; window.inativarTipoDoc=inativarTipoDoc;
 window.formVinculo=formVinculo; window.inativarVinculo=inativarVinculo;
 window.formDoacao=formDoacao; window.inativarDoacao=inativarDoacao;
 window.formITCMD=formITCMD; window.inativarITCMD=inativarITCMD;
@@ -2758,7 +2870,7 @@ window.pdfSim=pdfSim; window.pdfSimConsolidado=pdfSimConsolidado; window.exporta
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.18b (Simulações: relatórios PDF e Excel)');
+console.log('Patrimonial Artecon — app-shell · build 2026.19a (GED: vencimento + tipos parametrizáveis e semáforo)');
 </script>
 </body>
 </html>
