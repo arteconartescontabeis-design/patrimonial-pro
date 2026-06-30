@@ -206,7 +206,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
       <button class="btn btn-primary" id="btnLogin">Entrar</button>
-      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.19a</p>
+      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.20a</p>
     </div>
   </div>
 </div>
@@ -242,6 +242,8 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <button class="nav-item" data-route="onus" data-modulo="onus"><span class="ic">&#128274;</span> Ônus e Direitos</button>
       <button class="nav-item" data-route="vencimentos" data-modulo="vencimentos"><span class="ic">&#128197;</span> Vencimentos</button>
       <button class="nav-item" data-route="ged" data-modulo="ged"><span class="ic">&#128193;</span> Documentos</button>
+      <button class="nav-item" data-route="seguros" data-modulo="seguros"><span class="ic">&#128737;</span> Seguros</button>
+      <button class="nav-item" data-route="procuracoes" data-modulo="procuracoes"><span class="ic">&#9997;</span> Procurações</button>
       <button class="nav-item" data-route="sucessorio" data-modulo="sucessorio"><span class="ic">&#128220;</span> Planejamento Sucessório</button>
 
       <div class="nav-label" style="margin-top:14px">Painéis</div>
@@ -275,7 +277,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 // Módulos do sistema (para a matriz de permissões)
 const MODULOS = [
   ['patrimonio','Patrimônio'],['pessoas','Pessoas e Partes'],['societario','Estrutura Societária'],
-  ['onus','Ônus e Direitos Reais'],['ged','Gestão Documental'],['vencimentos','Vencimentos'],
+  ['onus','Ônus e Direitos Reais'],['ged','Gestão Documental'],['seguros','Seguros e Apólices'],['procuracoes','Procurações'],['vencimentos','Vencimentos'],
   ['sucessorio','Planejamento Sucessório'],['tributario','Motor Tributário'],['simulacoes','Motor de Simulações'],['bi','BI / Relatórios'],
   ['portal','Portal do Sócio'],['contratos','Contratos e Passivos'],['admin','Administração']
 ];
@@ -327,7 +329,7 @@ function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
 
 // ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
 // rota -> módulo. Administração exige admin; demais telas usam a matriz.
-const ROUTE_MOD = { inicio:'inicio', empresas:'admin', usuarios:'admin', acessos:'admin', auditoria:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', analise:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', sucessorio:'sucessorio', simulacoes:'simulacoes', bi:'bi' };
+const ROUTE_MOD = { inicio:'inicio', empresas:'admin', usuarios:'admin', acessos:'admin', auditoria:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', analise:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', seguros:'seguros', procuracoes:'procuracoes', sucessorio:'sucessorio', simulacoes:'simulacoes', bi:'bi' };
 
 async function carregarPermissoes(tenantId){
   ctx.perms = {};
@@ -501,6 +503,8 @@ function rota(){
   else if(r==='onus') telaOnus();
   else if(r==='vencimentos') telaVencimentos();
   else if(r==='ged') telaGED();
+  else if(r==='seguros') telaSeguros();
+  else if(r==='procuracoes') telaProcuracoes();
   else if(r==='sucessorio') telaSucessorio();
   else if(r==='bi') telaBI();
   else if(r==='simulacoes') telaSimulacoes();
@@ -1548,6 +1552,14 @@ async function telaVencimentos(){
   const { data: ds } = await sb.from('pat_documentos')
     .select('id,nome,data_vencimento, tipo_rel:pat_documento_tipos!tipo_id(nome)')
     .eq('tenant_id', ctx.tenantId).eq('ativo', true).not('data_vencimento','is',null);
+  // seguros com fim de vigência
+  const { data: sgs } = await sb.from('pat_seguros')
+    .select('id,seguradora,ramo,vigencia_fim,situacao')
+    .eq('tenant_id', ctx.tenantId).eq('ativo', true).not('vigencia_fim','is',null);
+  // procurações com validade
+  const { data: prc } = await sb.from('pat_procuracoes')
+    .select('id,outorgado_nome,outorgado_id,data_validade,situacao')
+    .eq('tenant_id', ctx.tenantId).eq('ativo', true).not('data_validade','is',null);
 
   const linhasManuais = _vencCache.map(v=>({
     source:'manual', id:v.id, titulo:v.titulo, categoria:CATEGORIA_VENC_MAP[v.categoria]||v.categoria,
@@ -1567,7 +1579,19 @@ async function telaVencimentos(){
     statusTxt: diasPara(d.data_vencimento)<0 ? 'Vencido' : 'Vigente',
     aberto: true
   }));
-  _vencRows = [...linhasManuais, ...linhasOnus, ...linhasDoc].sort((a,b)=>String(a.data).localeCompare(String(b.data)));
+  const linhasSeg = (sgs||[]).map(s=>({
+    source:'seguro', id:s.id, titulo:(s.seguradora||'Apólice')+(s.ramo?` · ${RAMO_SEGURO_MAP[s.ramo]||s.ramo}`:''), categoria:'Seguro',
+    vinculo:'Seguros', data:s.vigencia_fim, valor:null,
+    statusTxt: SIT_SEGURO_MAP[s.situacao]||s.situacao||(diasPara(s.vigencia_fim)<0?'Vencida':'Vigente'),
+    aberto: s.situacao!=='cancelada'
+  }));
+  const linhasProc = (prc||[]).map(p=>({
+    source:'proc', id:p.id, titulo:'Procuração'+((p.outorgado_nome||(_procPessoasMap&&_procPessoasMap[p.outorgado_id]))?` · ${p.outorgado_nome||_procPessoasMap[p.outorgado_id]}`:''), categoria:'Procuração',
+    vinculo:'Procurações', data:p.data_validade, valor:null,
+    statusTxt: SIT_PROC_MAP[p.situacao]||p.situacao||(diasPara(p.data_validade)<0?'Vencida':'Vigente'),
+    aberto: p.situacao!=='revogada'
+  }));
+  _vencRows = [...linhasManuais, ...linhasOnus, ...linhasDoc, ...linhasSeg, ...linhasProc].sort((a,b)=>String(a.data).localeCompare(String(b.data)));
 
   renderKpisVenc();
   $('#vencFiltro').onchange = e=>{ _vencFiltro=e.target.value; renderVenc(); };
@@ -1600,7 +1624,7 @@ function renderVenc(){
       <td>${fmtData(r.data)}</td>
       <td>${r.aberto?chipPrazo(r.data):'—'}</td>
       <td><b>${esc(r.titulo)}</b></td>
-      <td>${esc(r.categoria)}${r.source==='onus'?' <span class="badge role" style="margin-left:4px">Ônus</span>':''}${r.source==='doc'?' <span class="badge role" style="margin-left:4px">GED</span>':''}</td>
+      <td>${esc(r.categoria)}${r.source==='onus'?' <span class="badge role" style="margin-left:4px">Ônus</span>':''}${r.source==='doc'?' <span class="badge role" style="margin-left:4px">GED</span>':''}${r.source==='seguro'?' <span class="badge role" style="margin-left:4px">Seguro</span>':''}${r.source==='proc'?' <span class="badge role" style="margin-left:4px">Procuração</span>':''}</td>
       <td>${esc(r.vinculo)}</td>
       <td class="num">${fmtMoeda(r.valor)}</td>
       <td><span class="badge ${r.aberto?'sit':'inativo'}">${esc(r.statusTxt)}</span></td>
@@ -1608,7 +1632,7 @@ function renderVenc(){
         ${r.source==='manual'
           ? `<button class="btn btn-sm btn-ghost" data-perm="vencimentos:editar" onclick="formVencimento('${r.id}')">Editar</button>
              <button class="btn btn-sm btn-ghost btn-danger" data-perm="vencimentos:excluir" onclick="inativarVencimento('${r.id}')">Excluir</button>`
-          : `<span style="font-size:12px;color:var(--texto-3)">gerencie em ${r.source==='doc'?'Documentos':'Ônus'}</span>`}
+          : `<span style="font-size:12px;color:var(--texto-3)">gerencie em ${({doc:'Documentos',seguro:'Seguros',proc:'Procurações',onus:'Ônus'})[r.source]||'origem'}</span>`}
       </div></td></tr>`).join('')}
   </tbody></table>`;
   aplicarPermBotoes(card);
@@ -1909,6 +1933,243 @@ async function inativarTipoDoc(id){
 }
 
 // ============================================================
+// 2.6 SEGUROS / APÓLICES  (módulo 'seguros') — alimenta Vencimentos
+// ============================================================
+const RAMO_SEGURO=[['patrimonial','Patrimonial'],['vida','Vida'],['auto','Automóvel'],['rc','Responsabilidade Civil'],['do','D&O'],['empresarial','Empresarial'],['rural','Rural'],['outros','Outros']];
+const RAMO_SEGURO_MAP=Object.fromEntries(RAMO_SEGURO);
+const SIT_SEGURO=[['vigente','Vigente'],['renovada','Renovada'],['cancelada','Cancelada'],['vencida','Vencida']];
+const SIT_SEGURO_MAP=Object.fromEntries(SIT_SEGURO);
+let _segCache=[], _segAtivos=[], _segPessoas=[], _segAtivosMap={}, _segPessoasMap={};
+
+async function telaSeguros(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>Seguros e Apólices</h1><p>Apólices contratadas. A vigência alimenta automaticamente o painel de Vencimentos e o BI.</p></div>
+    <button class="btn btn-primary" data-perm="seguros:criar" id="novoSeg">+ Nova apólice</button></div>
+    <div class="toolbar"><input class="busca" id="buscaSeg" placeholder="Buscar por seguradora, apólice, ramo ou vínculo…"></div>
+    <div class="card" id="segCard"><div class="skeleton">Carregando…</div></div>`;
+  aplicarPermBotoes(c);
+  $('#novoSeg')?.addEventListener('click', ()=>formSeguro());
+
+  const [{data:at},{data:pe}]=await Promise.all([
+    sb.from('pat_ativos').select('id,descricao,ativo').eq('tenant_id',ctx.tenantId).order('descricao'),
+    sb.from('pat_pessoas').select('id,nome,tipo_pessoa,ativo').eq('tenant_id',ctx.tenantId).order('nome')
+  ]);
+  _segAtivos=(at||[]).filter(x=>x.ativo!==false); _segPessoas=(pe||[]).filter(x=>x.ativo!==false);
+  _segAtivosMap={}; _segAtivos.forEach(x=>_segAtivosMap[x.id]=x.descricao);
+  _segPessoasMap={}; _segPessoas.forEach(x=>_segPessoasMap[x.id]=x.nome);
+
+  const { data, error }=await sb.from('pat_seguros').select('*').eq('tenant_id',ctx.tenantId).order('vigencia_fim',{ascending:true});
+  if(error){ $('#segCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _segCache=data||[]; renderSeguros(_segCache);
+  $('#buscaSeg').oninput=e=>{ const q=e.target.value.toLowerCase().trim();
+    renderSeguros(_segCache.filter(s=>(s.seguradora||'').toLowerCase().includes(q)||(s.numero_apolice||'').toLowerCase().includes(q)||(RAMO_SEGURO_MAP[s.ramo]||s.ramo||'').toLowerCase().includes(q)||(vincSegLabel(s)||'').toLowerCase().includes(q))); };
+}
+function vincSegLabel(s){
+  if(s.vinculo_tipo==='ativo') return _segAtivosMap[s.vinculo_id]||'(ativo)';
+  if(s.vinculo_tipo==='pessoa') return _segPessoasMap[s.vinculo_id]||'(pessoa)';
+  return '—';
+}
+function renderSeguros(lista){
+  const card=$('#segCard');
+  if(!lista.length){ card.innerHTML=`<div class="empty"><b>Nenhuma apólice</b>Cadastre o primeiro seguro desta empresa.</div>`; return; }
+  card.innerHTML=`<table><thead><tr><th>Seguradora</th><th>Ramo</th><th>Apólice</th><th>Vínculo</th><th class="num">Imp. segurada</th><th>Vigência</th><th>Situação</th><th></th></tr></thead><tbody>
+    ${lista.map(s=>`<tr>
+      <td><b>${esc(s.seguradora)||'—'}</b></td>
+      <td>${esc(RAMO_SEGURO_MAP[s.ramo]||s.ramo)||'—'}</td>
+      <td>${esc(s.numero_apolice)||'—'}</td>
+      <td>${esc(vincSegLabel(s))}</td>
+      <td class="num">${fmtMoeda(s.valor_segurado)}</td>
+      <td>${s.vigencia_fim?`${fmtData(s.vigencia_fim)} &nbsp;${chipPrazo(s.vigencia_fim)}`:'—'}</td>
+      <td><span class="badge sit">${esc(SIT_SEGURO_MAP[s.situacao]||s.situacao)||'—'}</span></td>
+      <td><div class="row-actions">
+        <button class="btn btn-sm btn-ghost" data-perm="seguros:editar" onclick="formSeguro('${s.id}')">Editar</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-perm="seguros:excluir" onclick="inativarSeguro('${s.id}',${s.ativo})">${s.ativo?'Excluir':'Reativar'}</button>
+      </div></td></tr>`).join('')}
+  </tbody></table>`;
+  aplicarPermBotoes(card);
+}
+function formSeguro(id){
+  const s=id?(_segCache.find(x=>x.id===id)||{}):{}; const ed=!!s.id;
+  const vt=s.vinculo_tipo||'geral';
+  openModal(`
+    <div class="modal-head"><h2>${ed?'Editar apólice':'Nova apólice'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field"><label>Seguradora</label><input id="s_seg" value="${esc(s.seguradora)}"></div>
+        <div class="field"><label>Ramo</label><select id="s_ramo">${RAMO_SEGURO.map(([v,l])=>`<option value="${v}" ${(s.ramo||'patrimonial')===v?'selected':''}>${l}</option>`).join('')}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Nº da apólice</label><input id="s_num" value="${esc(s.numero_apolice)}"></div>
+        <div class="field"><label>Situação</label><select id="s_sit">${SIT_SEGURO.map(([v,l])=>`<option value="${v}" ${(s.situacao||'vigente')===v?'selected':''}>${l}</option>`).join('')}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Vincular a</label><select id="s_vt">
+          <option value="geral" ${vt==='geral'?'selected':''}>Geral (sem vínculo)</option>
+          <option value="ativo" ${vt==='ativo'?'selected':''}>Ativo</option>
+          <option value="pessoa" ${vt==='pessoa'?'selected':''}>Pessoa</option></select></div>
+        <div class="field" id="s_vencWrap" style="${vt==='geral'?'display:none':''}"><label>Item</label><select id="s_vid"><option value="">—</option></select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Importância segurada</label><input id="s_imp" type="number" step="0.01" value="${s.valor_segurado??''}"></div>
+        <div class="field"><label>Prêmio</label><input id="s_premio" type="number" step="0.01" value="${s.premio??''}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Início da vigência</label><input id="s_ini" type="date" value="${esc((s.vigencia_inicio||'').slice(0,10))}"></div>
+        <div class="field"><label>Fim da vigência <span class="hint" style="font-weight:400">(entra em Vencimentos)</span></label><input id="s_fim" type="date" value="${esc((s.vigencia_fim||'').slice(0,10))}"></div>
+      </div>
+      <div class="field"><label>Observações</label><input id="s_obs" value="${esc(s.observacoes)}"></div>
+    </div>
+    <div class="modal-foot">
+      ${ed?(s.ativo!==false
+        ?`<button class="btn btn-ghost btn-danger" data-perm="seguros:excluir" id="excluirSeg" style="margin-right:auto">Excluir</button>`
+        :`<button class="btn btn-ghost" data-perm="seguros:editar" id="reativarSeg" style="margin-right:auto">Reativar</button>`):''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="salvarSeg">Salvar</button></div>`);
+  aplicarPermBotoes($('#modal'));
+  const preencheVid=()=>{ const t=$('#s_vt').value; const wrap=$('#s_vencWrap');
+    if(t==='geral'){ wrap.style.display='none'; return; }
+    wrap.style.display='block';
+    const arr=t==='ativo'?_segAtivos.map(x=>[x.id,x.descricao]):_segPessoas.map(x=>[x.id,x.nome]);
+    $('#s_vid').innerHTML='<option value="">—</option>'+arr.map(([v,l])=>`<option value="${v}" ${s.vinculo_id===v?'selected':''}>${esc(l)}</option>`).join(''); };
+  $('#s_vt').onchange=preencheVid; preencheVid();
+  $('#excluirSeg')?.addEventListener('click', async ()=>{ if(!confirm('Excluir esta apólice? Será inativada, mantendo o histórico.')) return; await inativarSeguro(s.id,true); closeModal(); });
+  $('#reativarSeg')?.addEventListener('click', async ()=>{ await inativarSeguro(s.id,false); closeModal(); });
+  $('#salvarSeg').onclick=async ()=>{
+    const num=v=>{ v=(v??'').toString().trim(); return v===''?null:Number(v); };
+    const vt2=$('#s_vt').value;
+    const payload={ tenant_id:ctx.tenantId, seguradora:$('#s_seg').value.trim()||null, ramo:$('#s_ramo').value,
+      numero_apolice:$('#s_num').value.trim()||null, situacao:$('#s_sit').value,
+      vinculo_tipo:vt2, vinculo_id: vt2==='geral'?null:($('#s_vid').value||null),
+      valor_segurado:num($('#s_imp').value), premio:num($('#s_premio').value),
+      vigencia_inicio:$('#s_ini').value||null, vigencia_fim:$('#s_fim').value||null,
+      observacoes:$('#s_obs').value.trim()||null };
+    const btn=$('#salvarSeg'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error }=ed?await sb.from('pat_seguros').update(payload).eq('id',s.id).eq('tenant_id',ctx.tenantId)
+      :await sb.from('pat_seguros').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message,true); return; }
+    toast(ed?'Apólice atualizada':'Apólice cadastrada'); closeModal(); telaSeguros();
+  };
+}
+async function inativarSeguro(id, ativo){
+  const { error }=await sb.from('pat_seguros').update({ativo:!ativo}).eq('id',id).eq('tenant_id',ctx.tenantId);
+  if(error){ toast(error.message,true); return; }
+  toast(ativo?'Apólice excluída':'Apólice reativada'); telaSeguros();
+}
+
+// ============================================================
+// 2.7 PROCURAÇÕES  (módulo 'procuracoes') — alimenta Vencimentos
+// ============================================================
+const TIPO_PROC=[['publica','Pública'],['particular','Particular']];
+const TIPO_PROC_MAP=Object.fromEntries(TIPO_PROC);
+const SIT_PROC=[['vigente','Vigente'],['revogada','Revogada'],['vencida','Vencida']];
+const SIT_PROC_MAP=Object.fromEntries(SIT_PROC);
+let _procCache=[], _procPessoas=[], _procPessoasMap={};
+
+async function telaProcuracoes(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>Procurações</h1><p>Instrumentos de mandato. A validade alimenta automaticamente o painel de Vencimentos e o BI.</p></div>
+    <button class="btn btn-primary" data-perm="procuracoes:criar" id="novoProc">+ Nova procuração</button></div>
+    <div class="toolbar"><input class="busca" id="buscaProc" placeholder="Buscar por outorgante, outorgado, cartório ou poderes…"></div>
+    <div class="card" id="procCard"><div class="skeleton">Carregando…</div></div>`;
+  aplicarPermBotoes(c);
+  $('#novoProc')?.addEventListener('click', ()=>formProcuracao());
+
+  const { data:pe }=await sb.from('pat_pessoas').select('id,nome,tipo_pessoa,ativo').eq('tenant_id',ctx.tenantId).order('nome');
+  _procPessoas=(pe||[]).filter(x=>x.ativo!==false);
+  _procPessoasMap={}; _procPessoas.forEach(x=>_procPessoasMap[x.id]=x.nome);
+
+  const { data, error }=await sb.from('pat_procuracoes').select('*').eq('tenant_id',ctx.tenantId).order('data_validade',{ascending:true});
+  if(error){ $('#procCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _procCache=data||[]; renderProcuracoes(_procCache);
+  $('#buscaProc').oninput=e=>{ const q=e.target.value.toLowerCase().trim();
+    renderProcuracoes(_procCache.filter(p=>(outNome(p,'outorgante')||'').toLowerCase().includes(q)||(outNome(p,'outorgado')||'').toLowerCase().includes(q)||(p.cartorio||'').toLowerCase().includes(q)||(p.poderes||'').toLowerCase().includes(q))); };
+}
+function outNome(p, papel){
+  const id=p[papel+'_id'], nome=p[papel+'_nome'];
+  return (id&&_procPessoasMap[id]) || nome || '—';
+}
+function renderProcuracoes(lista){
+  const card=$('#procCard');
+  if(!lista.length){ card.innerHTML=`<div class="empty"><b>Nenhuma procuração</b>Cadastre o primeiro instrumento desta empresa.</div>`; return; }
+  card.innerHTML=`<table><thead><tr><th>Outorgante</th><th>Outorgado</th><th>Tipo</th><th>Emissão</th><th>Validade</th><th>Situação</th><th></th></tr></thead><tbody>
+    ${lista.map(p=>`<tr>
+      <td><b>${esc(outNome(p,'outorgante'))}</b></td>
+      <td>${esc(outNome(p,'outorgado'))}</td>
+      <td>${esc(TIPO_PROC_MAP[p.tipo]||p.tipo)||'—'}</td>
+      <td>${fmtData(p.data_emissao)}</td>
+      <td>${p.data_validade?`${fmtData(p.data_validade)} &nbsp;${chipPrazo(p.data_validade)}`:'<span class="badge fut">indeterminada</span>'}</td>
+      <td><span class="badge sit">${esc(SIT_PROC_MAP[p.situacao]||p.situacao)||'—'}</span></td>
+      <td><div class="row-actions">
+        <button class="btn btn-sm btn-ghost" data-perm="procuracoes:editar" onclick="formProcuracao('${p.id}')">Editar</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-perm="procuracoes:excluir" onclick="inativarProcuracao('${p.id}',${p.ativo})">${p.ativo?'Excluir':'Reativar'}</button>
+      </div></td></tr>`).join('')}
+  </tbody></table>`;
+  aplicarPermBotoes(card);
+}
+function formProcuracao(id){
+  const p=id?(_procCache.find(x=>x.id===id)||{}):{}; const ed=!!p.id;
+  const optPes=(sel)=>_procPessoas.map(x=>`<option value="${x.id}" ${sel===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('');
+  openModal(`
+    <div class="modal-head"><h2>${ed?'Editar procuração':'Nova procuração'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field"><label>Outorgante (cadastrado)</label><select id="p_outgid"><option value="">—</option>${optPes(p.outorgante_id)}</select><div class="hint">Quem outorga os poderes — pessoa cadastrada ou nome externo ao lado.</div></div>
+        <div class="field"><label>ou Outorgante externo</label><input id="p_outgnome" value="${esc(p.outorgante_nome)}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Outorgado (cadastrado)</label><select id="p_outdid"><option value="">—</option>${optPes(p.outorgado_id)}</select><div class="hint">Quem recebe os poderes.</div></div>
+        <div class="field"><label>ou Outorgado externo</label><input id="p_outdnome" value="${esc(p.outorgado_nome)}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Tipo</label><select id="p_tipo">${TIPO_PROC.map(([v,l])=>`<option value="${v}" ${(p.tipo||'particular')===v?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label>Situação</label><select id="p_sit">${SIT_PROC.map(([v,l])=>`<option value="${v}" ${(p.situacao||'vigente')===v?'selected':''}>${l}</option>`).join('')}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Cartório</label><input id="p_cart" value="${esc(p.cartorio)}"></div>
+        <div class="field"><label>Livro / Folha</label><input id="p_lf" value="${esc(p.livro_folha)}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Data de emissão</label><input id="p_emis" type="date" value="${esc((p.data_emissao||'').slice(0,10))}"></div>
+        <div class="field"><label>Validade <span class="hint" style="font-weight:400">(vazio = indeterminada)</span></label><input id="p_val" type="date" value="${esc((p.data_validade||'').slice(0,10))}"></div>
+      </div>
+      <div class="field"><label>Poderes / finalidade</label><input id="p_pod" value="${esc(p.poderes)}"></div>
+      <div class="field"><label>Observações</label><input id="p_obs" value="${esc(p.observacoes)}"></div>
+    </div>
+    <div class="modal-foot">
+      ${ed?(p.ativo!==false
+        ?`<button class="btn btn-ghost btn-danger" data-perm="procuracoes:excluir" id="excluirProc" style="margin-right:auto">Excluir</button>`
+        :`<button class="btn btn-ghost" data-perm="procuracoes:editar" id="reativarProc" style="margin-right:auto">Reativar</button>`):''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="salvarProc">Salvar</button></div>`);
+  aplicarPermBotoes($('#modal'));
+  $('#excluirProc')?.addEventListener('click', async ()=>{ if(!confirm('Excluir esta procuração? Será inativada, mantendo o histórico.')) return; await inativarProcuracao(p.id,true); closeModal(); });
+  $('#reativarProc')?.addEventListener('click', async ()=>{ await inativarProcuracao(p.id,false); closeModal(); });
+  $('#salvarProc').onclick=async ()=>{
+    const payload={ tenant_id:ctx.tenantId,
+      outorgante_id:$('#p_outgid').value||null, outorgante_nome:$('#p_outgnome').value.trim()||null,
+      outorgado_id:$('#p_outdid').value||null, outorgado_nome:$('#p_outdnome').value.trim()||null,
+      tipo:$('#p_tipo').value, situacao:$('#p_sit').value,
+      cartorio:$('#p_cart').value.trim()||null, livro_folha:$('#p_lf').value.trim()||null,
+      data_emissao:$('#p_emis').value||null, data_validade:$('#p_val').value||null,
+      poderes:$('#p_pod').value.trim()||null, observacoes:$('#p_obs').value.trim()||null };
+    if(!payload.outorgante_id && !payload.outorgante_nome){ toast('Informe o outorgante.', true); return; }
+    if(!payload.outorgado_id && !payload.outorgado_nome){ toast('Informe o outorgado.', true); return; }
+    const btn=$('#salvarProc'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error }=ed?await sb.from('pat_procuracoes').update(payload).eq('id',p.id).eq('tenant_id',ctx.tenantId)
+      :await sb.from('pat_procuracoes').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message,true); return; }
+    toast(ed?'Procuração atualizada':'Procuração cadastrada'); closeModal(); telaProcuracoes();
+  };
+}
+async function inativarProcuracao(id, ativo){
+  const { error }=await sb.from('pat_procuracoes').update({ativo:!ativo}).eq('id',id).eq('tenant_id',ctx.tenantId);
+  if(error){ toast(error.message,true); return; }
+  toast(ativo?'Procuração excluída':'Procuração reativada'); telaProcuracoes();
+}
+
+// ============================================================
 // 2.0 INÍCIO  (dashboard multi-empresa — sempre acessível)
 // ============================================================
 async function telaInicio(){
@@ -1972,15 +2233,17 @@ async function telaBI(){
   c.innerHTML=`<div class="page-head"><div><h1>BI / Relatórios</h1><p>Panorama consolidado da holding selecionada.</p></div></div>
     <div id="biBody"><div class="card"><div class="skeleton">Carregando indicadores…</div></div></div>`;
   const T=ctx.tenantId;
-  const [aR,pR,prR,oR,vR,dR] = await Promise.all([
+  const [aR,pR,prR,oR,vR,dR,sR,qR] = await Promise.all([
     sb.from('pat_ativos').select('tipo_ativo,valor_atual,situacao').eq('tenant_id',T).eq('ativo',true),
     sb.from('pat_pessoas').select('id,nome,tipo_pessoa').eq('tenant_id',T).eq('ativo',true),
     sb.from('pat_participacoes').select('sociedade_id,valor_nominal').eq('tenant_id',T).eq('ativo',true),
     sb.from('pat_onus').select('valor,situacao,data_vencimento,ativo_id,tipo').eq('tenant_id',T).eq('ativo',true),
     sb.from('pat_vencimentos').select('titulo,data_vencimento,status,valor').eq('tenant_id',T).eq('ativo',true),
-    sb.from('pat_documentos').select('id,nome,data_vencimento').eq('tenant_id',T).eq('ativo',true)
+    sb.from('pat_documentos').select('id,nome,data_vencimento').eq('tenant_id',T).eq('ativo',true),
+    sb.from('pat_seguros').select('seguradora,ramo,vigencia_fim').eq('tenant_id',T).eq('ativo',true),
+    sb.from('pat_procuracoes').select('outorgado_nome,data_validade').eq('tenant_id',T).eq('ativo',true)
   ]);
-  const ativos=aR.data||[], pessoas=pR.data||[], parts=prR.data||[], onus=oR.data||[], vencs=vR.data||[], docs=dR.data||[];
+  const ativos=aR.data||[], pessoas=pR.data||[], parts=prR.data||[], onus=oR.data||[], vencs=vR.data||[], docs=dR.data||[], seguros=sR.data||[], procs=qR.data||[];
   const nomeMap={}; pessoas.forEach(p=>nomeMap[p.id]=p.nome);
 
   const patTotal=ativos.reduce((s,a)=>s+(Number(a.valor_atual)||0),0);
@@ -1998,7 +2261,9 @@ async function telaBI(){
   const rows=[
     ...vencs.filter(v=>v.status==='pendente').map(v=>({titulo:v.titulo,data:v.data_vencimento})),
     ...onus.filter(o=>['ativo','em_execucao','suspenso'].includes(o.situacao) && o.data_vencimento).map(o=>({titulo:(TIPO_ONUS_MAP[o.tipo]||o.tipo),data:o.data_vencimento})),
-    ...docs.filter(d=>d.data_vencimento).map(d=>({titulo:d.nome,data:d.data_vencimento}))
+    ...docs.filter(d=>d.data_vencimento).map(d=>({titulo:d.nome,data:d.data_vencimento})),
+    ...seguros.filter(s=>s.vigencia_fim).map(s=>({titulo:'Seguro · '+(s.seguradora||(RAMO_SEGURO_MAP[s.ramo]||s.ramo)||'apólice'),data:s.vigencia_fim})),
+    ...procs.filter(p=>p.data_validade).map(p=>({titulo:'Procuração'+(p.outorgado_nome?' · '+p.outorgado_nome:''),data:p.data_validade}))
   ];
   const vencidos=rows.filter(r=>{const d=diasPara(r.data);return d!=null&&d<0;}).length;
   const prox30=rows.filter(r=>{const d=diasPara(r.data);return d!=null&&d>=0&&d<=30;}).length;
@@ -2860,6 +3125,8 @@ window.formParticipacao=formParticipacao; window.inativarParticipacao=inativarPa
 window.formOnus=formOnus; window.inativarOnus=inativarOnus;
 window.formVencimento=formVencimento; window.inativarVencimento=inativarVencimento;
 window.baixarDoc=baixarDoc; window.inativarDoc=inativarDoc; window.inativarTipoDoc=inativarTipoDoc;
+window.formSeguro=formSeguro; window.inativarSeguro=inativarSeguro;
+window.formProcuracao=formProcuracao; window.inativarProcuracao=inativarProcuracao;
 window.formVinculo=formVinculo; window.inativarVinculo=inativarVinculo;
 window.formDoacao=formDoacao; window.inativarDoacao=inativarDoacao;
 window.formITCMD=formITCMD; window.inativarITCMD=inativarITCMD;
@@ -2870,7 +3137,7 @@ window.pdfSim=pdfSim; window.pdfSimConsolidado=pdfSimConsolidado; window.exporta
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.19a (GED: vencimento + tipos parametrizáveis e semáforo)');
+console.log('Patrimonial Artecon — app-shell · build 2026.20a (Seguros e Procurações + integração ao motor de vencimento)');
 </script>
 </body>
 </html>
