@@ -206,7 +206,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
       <button class="btn btn-primary" id="btnLogin">Entrar</button>
-      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.17b</p>
+      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.18a</p>
     </div>
   </div>
 </div>
@@ -246,6 +246,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 
       <div class="nav-label" style="margin-top:14px">Painéis</div>
       <button class="nav-item" data-route="bi" data-modulo="bi"><span class="ic">&#128200;</span> BI / Relatórios</button>
+      <button class="nav-item" data-route="simulacoes" data-modulo="simulacoes"><span class="ic">&#129518;</span> Simulações IBS/CBS</button>
 
       <div class="nav-label" style="margin-top:14px">Administração</div>
       <button class="nav-item" data-route="usuarios" data-modulo="admin"><span class="ic">&#128100;</span> Usuários</button>
@@ -275,7 +276,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 const MODULOS = [
   ['patrimonio','Patrimônio'],['pessoas','Pessoas e Partes'],['societario','Estrutura Societária'],
   ['onus','Ônus e Direitos Reais'],['ged','Gestão Documental'],['vencimentos','Vencimentos'],
-  ['sucessorio','Planejamento Sucessório'],['tributario','Motor Tributário'],['bi','BI / Relatórios'],
+  ['sucessorio','Planejamento Sucessório'],['tributario','Motor Tributário'],['simulacoes','Motor de Simulações'],['bi','BI / Relatórios'],
   ['portal','Portal do Sócio'],['contratos','Contratos e Passivos'],['admin','Administração']
 ];
 
@@ -326,7 +327,7 @@ function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
 
 // ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
 // rota -> módulo. Administração exige admin; demais telas usam a matriz.
-const ROUTE_MOD = { inicio:'inicio', empresas:'admin', usuarios:'admin', acessos:'admin', auditoria:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', analise:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', sucessorio:'sucessorio', bi:'bi' };
+const ROUTE_MOD = { inicio:'inicio', empresas:'admin', usuarios:'admin', acessos:'admin', auditoria:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', analise:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', sucessorio:'sucessorio', simulacoes:'simulacoes', bi:'bi' };
 
 async function carregarPermissoes(tenantId){
   ctx.perms = {};
@@ -502,6 +503,7 @@ function rota(){
   else if(r==='ged') telaGED();
   else if(r==='sucessorio') telaSucessorio();
   else if(r==='bi') telaBI();
+  else if(r==='simulacoes') telaSimulacoes();
   else semAcesso();
 }
 
@@ -2425,6 +2427,244 @@ function audDetalhe(id){
     <div class="modal-foot"><button class="btn btn-primary" onclick="closeModal()">Fechar</button></div>`);
 }
 
+// ============================================================
+// 2.10 MOTOR DE SIMULAÇÕES IBS/CBS (módulo 'simulacoes')
+// ============================================================
+let _simTab='simulacoes';
+let _simParams=[], _simOps=[], _simAtivos=[];
+const TIPO_OP_MAP={locacao:'Locação',venda:'Venda'};
+function pctTxt(v){ return v!=null?Number(v).toLocaleString('pt-BR',{maximumFractionDigits:3})+'%':'—'; }
+function round2(v){ return v!=null?Number(Number(v).toFixed(2)):v; }
+function round3(v){ return v!=null?Number(Number(v).toFixed(3)):v; }
+
+async function telaSimulacoes(){
+  const c=$('#content');
+  c.innerHTML=`<div class="page-head"><div><h1>Simulações IBS/CBS</h1><p>Estimativa de IBS e CBS na locação e venda de imóveis e veículos (Reforma Tributária — EC 132/2023, LC 214/2025).</p></div></div>
+    <div class="tabs">${[['simulacoes','Simulações'],['parametros','Parâmetros (alíquotas)']].map(([k,l])=>`<button class="tab ${_simTab===k?'active':''}" data-tab="${k}">${l}</button>`).join('')}</div>
+    <div id="simBodyW"><div class="card"><div class="skeleton">Carregando…</div></div></div>`;
+  c.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{ _simTab=b.dataset.tab; telaSimulacoes(); });
+  const { data:pp } = await sb.from('pat_sim_parametros').select('*').eq('tenant_id',ctx.tenantId).eq('ativo',true).order('ano');
+  _simParams=pp||[];
+  if(_simTab==='parametros') simParametros(); else simListaOps();
+}
+
+// ---- cálculo (puro) ----
+function calcSim(params, inp){
+  const valor=Number(inp.valor)||0;
+  let red = inp.tipo_bem==='imovel'
+    ? (inp.tipo_operacao==='venda'? Number(params.red_imovel_venda)||0 : Number(params.red_imovel_locacao)||0)
+    : (Number(params.red_veiculo)||0);
+  const aliqIbsEf=(Number(params.aliquota_ibs)||0)*(1-red/100);
+  const aliqCbsEf=(Number(params.aliquota_cbs)||0)*(1-red/100);
+  const social=inp.residencial? (Number(params.redutor_social)||0):0;
+  const base=Math.max(0, valor-social);
+  const ibs=base*aliqIbsEf/100, cbs=base*aliqCbsEf/100, totalNovo=ibs+cbs;
+  const cargaAtual=(inp.aliquota_atual!=null && inp.aliquota_atual!=='')? valor*(Number(inp.aliquota_atual)||0)/100 : null;
+  const diferenca=cargaAtual!=null? totalNovo-cargaAtual : null;
+  return { base_calculo:base, aliq_ibs_efetiva:aliqIbsEf, aliq_cbs_efetiva:aliqCbsEf, ibs, cbs, total_novo:totalNovo, carga_atual:cargaAtual, diferenca, red };
+}
+function memoriaHTML(r){
+  const lin=(l,v,strong)=>`<div style="display:flex;justify-content:space-between;padding:4px 0;${strong?'font-weight:700;border-top:1px solid var(--linha);margin-top:4px;padding-top:8px':''}"><span style="color:var(--texto-2)">${l}</span><span>${v}</span></div>`;
+  let h=`<div style="background:#f7f9fb;border:1px solid var(--linha);border-radius:10px;padding:14px 16px">
+    <div style="font-weight:700;color:var(--azul-esc);margin-bottom:8px;font-family:'Playfair Display',serif">Memória de cálculo</div>`;
+  h+=lin('Base de cálculo', fmtMoeda(r.base_calculo));
+  h+=lin('Alíquota IBS efetiva'+(r.red?` (redutor ${pctTxt(r.red)})`:''), pctTxt(r.aliq_ibs_efetiva));
+  h+=lin('Alíquota CBS efetiva', pctTxt(r.aliq_cbs_efetiva));
+  h+=lin('IBS', fmtMoeda(r.ibs));
+  h+=lin('CBS', fmtMoeda(r.cbs));
+  h+=lin('Total IBS + CBS', fmtMoeda(r.total_novo), true);
+  if(r.carga_atual!=null){
+    h+=lin('Carga atual estimada', fmtMoeda(r.carga_atual));
+    const dif=r.diferenca, cor=dif>0?'#c0392b':(dif<0?'#1e7e34':'inherit');
+    h+=`<div style="display:flex;justify-content:space-between;padding-top:8px;font-weight:700"><span>Diferença (novo − atual)</span><span style="color:${cor}">${dif>=0?'+':''}${fmtMoeda(dif)}</span></div>`;
+  }
+  return h+'</div>';
+}
+
+// ---- aba Parâmetros ----
+function simParametros(){
+  const b=$('#simBodyW');
+  b.innerHTML=`<div class="toolbar"><button class="btn btn-primary" data-perm="simulacoes:criar" id="spAdd">+ Novo ano</button>
+    <div class="perm-note" style="flex:1;margin:0">Alíquotas e redutores por ano são <b>estimativas parametrizáveis</b> — ajuste conforme a regulamentação. Os redutores de imóveis refletem o regime específico de bens imóveis (LC 214/2025).</div></div>
+    <div class="card" id="spCard"></div>`;
+  aplicarPermBotoes(b);
+  $('#spAdd').onclick=()=>formParametro();
+  renderParams();
+}
+function renderParams(){
+  const card=$('#spCard');
+  if(!_simParams.length){ card.innerHTML='<div class="empty"><b>Nenhum ano configurado</b>Cadastre o primeiro ano com as alíquotas de IBS/CBS.</div>'; return; }
+  card.innerHTML=`<table><thead><tr><th>Ano</th><th class="num">IBS</th><th class="num">CBS</th><th class="num">Red. imóvel venda</th><th class="num">Red. imóvel locação</th><th class="num">Red. veículo</th><th class="num">Redutor social</th><th></th></tr></thead><tbody>
+    ${_simParams.map(p=>`<tr>
+      <td><b>${p.ano}</b>${p.descricao?`<br><small style="color:var(--texto-3)">${esc(p.descricao)}</small>`:''}</td>
+      <td class="num">${pctTxt(p.aliquota_ibs)}</td><td class="num">${pctTxt(p.aliquota_cbs)}</td>
+      <td class="num">${pctTxt(p.red_imovel_venda)}</td><td class="num">${pctTxt(p.red_imovel_locacao)}</td>
+      <td class="num">${pctTxt(p.red_veiculo)}</td><td class="num">${fmtMoeda(p.redutor_social)}</td>
+      <td><div class="row-actions">
+        <button class="btn btn-sm btn-ghost" data-perm="simulacoes:editar" onclick="formParametro('${p.id}')">Editar</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-perm="simulacoes:excluir" onclick="inativarParametro('${p.id}')">Excluir</button>
+      </div></td></tr>`).join('')}
+  </tbody></table>`;
+  aplicarPermBotoes(card);
+}
+function formParametro(id){
+  const p=id?(_simParams.find(x=>x.id===id)||{}):{}; const ed=!!p.id; const dv=(v,d)=>v??d;
+  openModal(`<div class="modal-head"><h2>${ed?'Editar parâmetros':'Novo ano de parâmetros'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field"><label>Ano <span class="req">*</span></label><input id="sp_ano" type="number" value="${dv(p.ano,new Date().getFullYear())}"></div>
+        <div class="field"><label>Descrição</label><input id="sp_desc" placeholder="ex.: transição / alíquota cheia" value="${esc(p.descricao)}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Alíquota IBS (%)</label><input id="sp_ibs" type="number" step="0.001" value="${dv(p.aliquota_ibs,'')}"></div>
+        <div class="field"><label>Alíquota CBS (%)</label><input id="sp_cbs" type="number" step="0.001" value="${dv(p.aliquota_cbs,'')}"></div>
+      </div>
+      <div class="nav-label" style="padding:0;margin:6px 0 8px">Redutores do regime específico</div>
+      <div class="grid2">
+        <div class="field"><label>Red. alíquota — imóvel venda (%)</label><input id="sp_riv" type="number" step="0.001" value="${dv(p.red_imovel_venda,'')}"></div>
+        <div class="field"><label>Red. alíquota — imóvel locação (%)</label><input id="sp_ril" type="number" step="0.001" value="${dv(p.red_imovel_locacao,'')}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Red. alíquota — veículo (%)</label><input id="sp_rv" type="number" step="0.001" value="${dv(p.red_veiculo,'')}"></div>
+        <div class="field"><label>Redutor social — base (R$)</label><input id="sp_rs" type="number" step="0.01" value="${dv(p.redutor_social,'')}"></div>
+      </div>
+      <div class="hint">Partida sugerida (estimativas): IBS 17,7% · CBS 8,8% · redutor imóveis 50% · veículo 0%. Confirme os valores vigentes.</div>
+    </div>
+    <div class="modal-foot">${ed?`<button class="btn btn-ghost btn-danger" data-perm="simulacoes:excluir" id="sp_del" style="margin-right:auto">Excluir</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" id="sp_save">Salvar</button></div>`);
+  aplicarPermBotoes($('#modal'));
+  $('#sp_del')?.addEventListener('click',async()=>{ if(!confirm('Excluir este ano?'))return; await inativarParametro(p.id); closeModal(); });
+  $('#sp_save').onclick=async()=>{
+    const ano=parseInt($('#sp_ano').value); if(!ano){ toast('Informe o ano.',true); return; }
+    const num=x=>{ x=(x??'').toString().trim(); return x===''?0:Number(x); };
+    const payload={ tenant_id:ctx.tenantId, ano, aliquota_ibs:num($('#sp_ibs').value), aliquota_cbs:num($('#sp_cbs').value),
+      red_imovel_venda:num($('#sp_riv').value), red_imovel_locacao:num($('#sp_ril').value),
+      red_veiculo:num($('#sp_rv').value), redutor_social:num($('#sp_rs').value), descricao:$('#sp_desc').value.trim()||null };
+    const btn=$('#sp_save'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error } = ed? await sb.from('pat_sim_parametros').update(payload).eq('id',p.id).eq('tenant_id',ctx.tenantId) : await sb.from('pat_sim_parametros').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message,true); return; }
+    toast(ed?'Parâmetros atualizados':'Ano cadastrado'); closeModal(); telaSimulacoes();
+  };
+}
+async function inativarParametro(id){ const {error}=await sb.from('pat_sim_parametros').update({ativo:false}).eq('id',id).eq('tenant_id',ctx.tenantId); if(error){toast(error.message,true);return;} toast('Ano excluído'); telaSimulacoes(); }
+
+// ---- aba Simulações ----
+async function simListaOps(){
+  const b=$('#simBodyW');
+  if(!_simParams.length){ b.innerHTML=`<div class="card"><div class="empty"><b>Configure os parâmetros primeiro</b>Cadastre ao menos um ano com as alíquotas de IBS/CBS na aba "Parâmetros".</div></div>`; return; }
+  b.innerHTML=`<div class="toolbar"><button class="btn btn-primary" data-perm="simulacoes:criar" id="soAdd">+ Nova simulação</button><span style="flex:1"></span><input class="busca" id="soBusca" placeholder="Buscar…"></div>
+    <div class="card" id="soCard"><div class="skeleton">Carregando…</div></div>`;
+  aplicarPermBotoes(b);
+  const { data:ats } = await sb.from('pat_ativos').select('id,descricao,tipo_ativo,valor_atual,ativo').eq('tenant_id',ctx.tenantId).eq('ativo',true).in('tipo_ativo',['imovel','veiculo']).order('descricao');
+  _simAtivos=ats||[];
+  $('#soAdd').onclick=()=>formSimulacao();
+  await carregarOps();
+  $('#soBusca').oninput=()=>renderOps();
+}
+async function carregarOps(){
+  const { data, error } = await sb.from('pat_sim_operacoes').select('*').eq('tenant_id',ctx.tenantId).eq('ativo',true).order('created_at',{ascending:false});
+  if(error){ $('#soCard').innerHTML=`<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+  _simOps=data||[]; renderOps();
+}
+function renderOps(){
+  const card=$('#soCard'); const q=($('#soBusca')?.value||'').toLowerCase().trim();
+  let lista=_simOps; if(q) lista=lista.filter(o=>(o.descricao||'').toLowerCase().includes(q));
+  if(!lista.length){ card.innerHTML='<div class="empty"><b>Nenhuma simulação</b>Crie a primeira simulação de IBS/CBS.</div>'; return; }
+  const tot=lista.reduce((a,o)=>{a.novo+=Number(o.total_novo)||0;a.atual+=Number(o.carga_atual)||0;return a;},{novo:0,atual:0});
+  card.innerHTML=`<table><thead><tr><th>Descrição</th><th>Bem / Operação</th><th class="num">Valor</th><th class="num">Ano</th><th class="num">IBS+CBS</th><th class="num">vs. atual</th><th></th></tr></thead><tbody>
+    ${lista.map(o=>{ const dif=Number(o.diferenca); const cor=dif>0?'#c0392b':(dif<0?'#1e7e34':'var(--texto-3)');
+      return `<tr>
+        <td><b>${esc(o.descricao)||'—'}</b></td>
+        <td style="text-transform:capitalize">${o.tipo_bem} · ${TIPO_OP_MAP[o.tipo_operacao]||o.tipo_operacao}${o.residencial?' · resid.':''}</td>
+        <td class="num">${fmtMoeda(o.valor)}</td><td class="num">${o.ano||'—'}</td>
+        <td class="num"><b>${fmtMoeda(o.total_novo)}</b></td>
+        <td class="num" style="color:${cor}">${(o.carga_atual!=null&&o.aliquota_atual!=null)?((dif>=0?'+':'')+fmtMoeda(dif)):'—'}</td>
+        <td><div class="row-actions">
+          <button class="btn btn-sm btn-ghost" onclick="memoriaSim('${o.id}')">Memória</button>
+          <button class="btn btn-sm btn-ghost" onclick="projecaoSim('${o.id}')">Projeção</button>
+          <button class="btn btn-sm btn-ghost" data-perm="simulacoes:editar" onclick="formSimulacao('${o.id}')">Editar</button>
+          <button class="btn btn-sm btn-ghost btn-danger" data-perm="simulacoes:excluir" onclick="inativarOp('${o.id}')">Excluir</button>
+        </div></td></tr>`;}).join('')}
+  </tbody><tfoot><tr style="font-weight:700;border-top:2px solid var(--linha)"><td colspan="4">Total (${lista.length})</td><td class="num">${fmtMoeda(tot.novo)}</td><td class="num">${tot.atual?((tot.novo-tot.atual>=0?'+':'')+fmtMoeda(tot.novo-tot.atual)):'—'}</td><td></td></tr></tfoot></table>`;
+  aplicarPermBotoes(card);
+}
+function formSimulacao(id){
+  const o=id?(_simOps.find(x=>x.id===id)||{}):{}; const ed=!!o.id;
+  openModal(`<div class="modal-head"><h2>${ed?'Editar simulação':'Nova simulação IBS/CBS'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Descrição</label><input id="so_desc" value="${esc(o.descricao)}"></div>
+      <div class="field"><label>Bem vinculado (opcional)</label><select id="so_ativo"><option value="">— avulso —</option>
+        ${_simAtivos.map(a=>`<option value="${a.id}" data-tipo="${a.tipo_ativo}" data-valor="${a.valor_atual??''}" ${o.ativo_id===a.id?'selected':''}>${esc(a.descricao)} (${TIPO_ATIVO[a.tipo_ativo]||a.tipo_ativo})</option>`).join('')}</select><div class="hint">Selecionar um imóvel/veículo preenche o tipo e sugere o valor.</div></div>
+      <div class="grid2">
+        <div class="field"><label>Tipo de bem <span class="req">*</span></label><select id="so_bem"><option value="imovel" ${o.tipo_bem==='imovel'?'selected':''}>Imóvel</option><option value="veiculo" ${o.tipo_bem==='veiculo'?'selected':''}>Veículo</option></select></div>
+        <div class="field"><label>Operação <span class="req">*</span></label><select id="so_op"><option value="locacao" ${o.tipo_operacao==='locacao'?'selected':''}>Locação</option><option value="venda" ${o.tipo_operacao==='venda'?'selected':''}>Venda</option></select></div>
+      </div>
+      <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500"><input type="checkbox" id="so_resid" style="width:18px;height:18px;accent-color:var(--azul)" ${o.residencial?'checked':''}> Imóvel residencial (aplica redutor social)</label></div>
+      <div class="grid2">
+        <div class="field"><label>Valor da operação (R$) <span class="req">*</span></label><input id="so_valor" type="number" step="0.01" value="${o.valor??''}"><div class="hint">Para locação, use o aluguel (base mensal).</div></div>
+        <div class="field"><label>Ano de referência <span class="req">*</span></label><select id="so_ano">${_simParams.map(p=>`<option value="${p.ano}" ${o.ano===p.ano?'selected':''}>${p.ano}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label>Carga atual estimada (%) — opcional</label><input id="so_atual" type="number" step="0.001" value="${o.aliquota_atual??''}"><div class="hint">Para comparar com o regime atual (PIS/COFINS/ISS/ICMS conforme a operação). Vazio = sem comparação.</div></div>
+      <div style="border-top:1px solid var(--linha);margin:8px 0 12px"></div>
+      <div id="so_result"></div>
+      <div class="field" style="margin-top:12px"><label>Observações</label><input id="so_obs" value="${esc(o.observacoes)}"></div>
+    </div>
+    <div class="modal-foot">${ed?`<button class="btn btn-ghost btn-danger" data-perm="simulacoes:excluir" id="so_del" style="margin-right:auto">Excluir</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" id="so_save">Salvar</button></div>`);
+  aplicarPermBotoes($('#modal'));
+  const recalc=()=>{
+    const ano=parseInt($('#so_ano').value); const params=_simParams.find(p=>p.ano===ano);
+    if(!params){ $('#so_result').innerHTML='<div class="hint warn">Sem parâmetros para o ano selecionado.</div>'; return; }
+    const r=calcSim(params,{ tipo_bem:$('#so_bem').value, tipo_operacao:$('#so_op').value, residencial:$('#so_resid').checked, valor:$('#so_valor').value, aliquota_atual:$('#so_atual').value });
+    $('#so_result').innerHTML=memoriaHTML(r);
+  };
+  ['so_bem','so_op','so_resid','so_valor','so_ano','so_atual'].forEach(idf=>{ const el=$('#'+idf); el.addEventListener('input',recalc); el.addEventListener('change',recalc); });
+  $('#so_ativo').addEventListener('change',()=>{ const op=$('#so_ativo').selectedOptions[0]; if(op&&op.dataset.tipo){ $('#so_bem').value=op.dataset.tipo; if(op.dataset.valor && !$('#so_valor').value) $('#so_valor').value=op.dataset.valor; } recalc(); });
+  recalc();
+  $('#so_del')?.addEventListener('click',async()=>{ if(!confirm('Excluir esta simulação?'))return; await inativarOp(o.id); closeModal(); });
+  $('#so_save').onclick=async()=>{
+    const valor=Number($('#so_valor').value)||0; if(!valor){ toast('Informe o valor da operação.',true); return; }
+    const ano=parseInt($('#so_ano').value); const params=_simParams.find(p=>p.ano===ano);
+    const inp={ tipo_bem:$('#so_bem').value, tipo_operacao:$('#so_op').value, residencial:$('#so_resid').checked, valor, aliquota_atual:$('#so_atual').value };
+    const r=calcSim(params,inp); const at=$('#so_atual').value.trim();
+    const payload={ tenant_id:ctx.tenantId, descricao:$('#so_desc').value.trim()||null, ativo_id:$('#so_ativo').value||null,
+      tipo_bem:inp.tipo_bem, tipo_operacao:inp.tipo_operacao, residencial:inp.residencial, valor, ano,
+      aliquota_atual: at===''?null:Number(at),
+      base_calculo:round2(r.base_calculo), aliq_ibs_efetiva:round3(r.aliq_ibs_efetiva), aliq_cbs_efetiva:round3(r.aliq_cbs_efetiva),
+      ibs:round2(r.ibs), cbs:round2(r.cbs), total_novo:round2(r.total_novo),
+      carga_atual:r.carga_atual!=null?round2(r.carga_atual):null, diferenca:r.diferenca!=null?round2(r.diferenca):null,
+      observacoes:$('#so_obs').value.trim()||null };
+    const btn=$('#so_save'); btn.disabled=true; btn.innerHTML='<span class="loader"></span>';
+    const { error } = ed? await sb.from('pat_sim_operacoes').update(payload).eq('id',o.id).eq('tenant_id',ctx.tenantId) : await sb.from('pat_sim_operacoes').insert(payload);
+    btn.disabled=false; btn.textContent='Salvar';
+    if(error){ toast(error.message,true); return; }
+    toast(ed?'Simulação atualizada':'Simulação salva'); closeModal(); carregarOps();
+  };
+}
+function memoriaSim(id){
+  const o=_simOps.find(x=>x.id===id); if(!o) return;
+  const r={ base_calculo:o.base_calculo, aliq_ibs_efetiva:o.aliq_ibs_efetiva, aliq_cbs_efetiva:o.aliq_cbs_efetiva, ibs:o.ibs, cbs:o.cbs, total_novo:o.total_novo, carga_atual:o.carga_atual, diferenca:o.diferenca, red:null };
+  openModal(`<div class="modal-head"><h2>Memória — ${esc(o.descricao)||'simulação'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body"><div class="hint" style="margin-bottom:10px;text-transform:capitalize">${o.tipo_bem} · ${TIPO_OP_MAP[o.tipo_operacao]||o.tipo_operacao}${o.residencial?' · residencial':''} · ano ${o.ano} · valor ${fmtMoeda(o.valor)}</div>${memoriaHTML(r)}</div>
+    <div class="modal-foot"><button class="btn btn-primary" onclick="closeModal()">Fechar</button></div>`);
+}
+function projecaoSim(id){
+  const o=_simOps.find(x=>x.id===id); if(!o) return;
+  const rows=_simParams.slice().sort((a,b)=>a.ano-b.ano).map(p=>({ ano:p.ano, total:calcSim(p,{tipo_bem:o.tipo_bem,tipo_operacao:o.tipo_operacao,residencial:o.residencial,valor:o.valor,aliquota_atual:o.aliquota_atual}).total_novo }));
+  const max=Math.max(1,...rows.map(r=>r.total));
+  openModal(`<div class="modal-head"><h2>Projeção na transição — ${esc(o.descricao)||'simulação'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="hint" style="margin-bottom:10px;text-transform:capitalize">${o.tipo_bem} · ${TIPO_OP_MAP[o.tipo_operacao]||o.tipo_operacao} · valor ${fmtMoeda(o.valor)} — IBS+CBS por ano configurado.</div>
+      <table><thead><tr><th>Ano</th><th class="num">IBS+CBS</th><th>Evolução</th></tr></thead><tbody>
+        ${rows.map(r=>`<tr><td><b>${r.ano}</b></td><td class="num">${fmtMoeda(r.total)}</td><td style="width:50%"><div style="background:var(--azul);height:14px;border-radius:7px;width:${Math.max(2,(r.total/max*100)).toFixed(1)}%"></div></td></tr>`).join('')}
+      </tbody></table>
+      ${rows.length<2?'<div class="hint" style="margin-top:8px">Cadastre mais anos na aba Parâmetros para ver a evolução completa da transição.</div>':''}
+    </div>
+    <div class="modal-foot"><button class="btn btn-primary" onclick="closeModal()">Fechar</button></div>`);
+}
+async function inativarOp(id){ const {error}=await sb.from('pat_sim_operacoes').update({ativo:false}).eq('id',id).eq('tenant_id',ctx.tenantId); if(error){toast(error.message,true);return;} toast('Simulação excluída'); carregarOps(); }
+
 // expõe handlers usados em onclick inline
 window.formEmpresa=formEmpresa; window.toggleEmpresa=toggleEmpresa;
 window.formUsuario=formUsuario; window.formNovoUsuario=formNovoUsuario; window.toggleUsuario=toggleUsuario;
@@ -2438,10 +2678,12 @@ window.formVinculo=formVinculo; window.inativarVinculo=inativarVinculo;
 window.formDoacao=formDoacao; window.inativarDoacao=inativarDoacao;
 window.formITCMD=formITCMD; window.inativarITCMD=inativarITCMD;
 window.aplicarDoacao=aplicarDoacao; window.addConjuge=addConjuge; window.audDetalhe=audDetalhe;
+window.formParametro=formParametro; window.inativarParametro=inativarParametro;
+window.formSimulacao=formSimulacao; window.inativarOp=inativarOp; window.memoriaSim=memoriaSim; window.projecaoSim=projecaoSim;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.17b (usabilidade: dicas e validações em Pessoas, Ativos e Ônus)');
+console.log('Patrimonial Artecon — app-shell · build 2026.18a (Fase 9: Motor de Simulações IBS/CBS)');
 </script>
 </body>
 </html>
