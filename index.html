@@ -206,7 +206,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
       <button class="btn btn-primary" id="btnLogin">Entrar</button>
-      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.18a</p>
+      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.18b</p>
     </div>
   </div>
 </div>
@@ -2553,12 +2553,17 @@ async function inativarParametro(id){ const {error}=await sb.from('pat_sim_param
 async function simListaOps(){
   const b=$('#simBodyW');
   if(!_simParams.length){ b.innerHTML=`<div class="card"><div class="empty"><b>Configure os parâmetros primeiro</b>Cadastre ao menos um ano com as alíquotas de IBS/CBS na aba "Parâmetros".</div></div>`; return; }
-  b.innerHTML=`<div class="toolbar"><button class="btn btn-primary" data-perm="simulacoes:criar" id="soAdd">+ Nova simulação</button><span style="flex:1"></span><input class="busca" id="soBusca" placeholder="Buscar…"></div>
+  b.innerHTML=`<div class="toolbar"><button class="btn btn-primary" data-perm="simulacoes:criar" id="soAdd">+ Nova simulação</button>
+      <button class="btn btn-ghost" id="soXls">Exportar Excel</button>
+      <button class="btn btn-ghost" id="soPdf">Relatório PDF</button>
+      <span style="flex:1"></span><input class="busca" id="soBusca" placeholder="Buscar…"></div>
     <div class="card" id="soCard"><div class="skeleton">Carregando…</div></div>`;
   aplicarPermBotoes(b);
   const { data:ats } = await sb.from('pat_ativos').select('id,descricao,tipo_ativo,valor_atual,ativo').eq('tenant_id',ctx.tenantId).eq('ativo',true).in('tipo_ativo',['imovel','veiculo']).order('descricao');
   _simAtivos=ats||[];
   $('#soAdd').onclick=()=>formSimulacao();
+  $('#soXls').onclick=()=>exportarSimExcel();
+  $('#soPdf').onclick=()=>pdfSimConsolidado();
   await carregarOps();
   $('#soBusca').oninput=()=>renderOps();
 }
@@ -2647,7 +2652,7 @@ function memoriaSim(id){
   const r={ base_calculo:o.base_calculo, aliq_ibs_efetiva:o.aliq_ibs_efetiva, aliq_cbs_efetiva:o.aliq_cbs_efetiva, ibs:o.ibs, cbs:o.cbs, total_novo:o.total_novo, carga_atual:o.carga_atual, diferenca:o.diferenca, red:null };
   openModal(`<div class="modal-head"><h2>Memória — ${esc(o.descricao)||'simulação'}</h2><button class="x" onclick="closeModal()">&times;</button></div>
     <div class="modal-body"><div class="hint" style="margin-bottom:10px;text-transform:capitalize">${o.tipo_bem} · ${TIPO_OP_MAP[o.tipo_operacao]||o.tipo_operacao}${o.residencial?' · residencial':''} · ano ${o.ano} · valor ${fmtMoeda(o.valor)}</div>${memoriaHTML(r)}</div>
-    <div class="modal-foot"><button class="btn btn-primary" onclick="closeModal()">Fechar</button></div>`);
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="pdfSim('${o.id}')">Baixar PDF</button><button class="btn btn-primary" onclick="closeModal()">Fechar</button></div>`);
 }
 function projecaoSim(id){
   const o=_simOps.find(x=>x.id===id); if(!o) return;
@@ -2665,6 +2670,75 @@ function projecaoSim(id){
 }
 async function inativarOp(id){ const {error}=await sb.from('pat_sim_operacoes').update({ativo:false}).eq('id',id).eq('tenant_id',ctx.tenantId); if(error){toast(error.message,true);return;} toast('Simulação excluída'); carregarOps(); }
 
+// ---- exportação de relatórios (Excel / PDF) ----
+const _libs={};
+function loadScript(src){ if(_libs[src]) return _libs[src]; _libs[src]=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=()=>res(); s.onerror=()=>rej(new Error('Falha ao carregar biblioteca (verifique a conexão)')); document.head.appendChild(s); }); return _libs[src]; }
+
+async function exportarSimExcel(){
+  if(!_simOps.length){ toast('Nenhuma simulação para exportar.', true); return; }
+  try{
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+    const rows=_simOps.map(o=>({
+      'Descrição':o.descricao||'', 'Bem':o.tipo_bem, 'Operação':TIPO_OP_MAP[o.tipo_operacao]||o.tipo_operacao,
+      'Residencial':o.residencial?'Sim':'Não', 'Valor':Number(o.valor)||0, 'Ano':o.ano||'',
+      'Base de cálculo':Number(o.base_calculo)||0, 'Alíq. IBS efetiva (%)':Number(o.aliq_ibs_efetiva)||0, 'Alíq. CBS efetiva (%)':Number(o.aliq_cbs_efetiva)||0,
+      'IBS':Number(o.ibs)||0, 'CBS':Number(o.cbs)||0, 'Total IBS+CBS':Number(o.total_novo)||0,
+      'Carga atual':o.carga_atual!=null?Number(o.carga_atual):'', 'Diferença':o.diferenca!=null?Number(o.diferenca):''
+    }));
+    const ws=XLSX.utils.json_to_sheet(rows);
+    ws['!cols']=[{wch:28},{wch:10},{wch:12},{wch:11},{wch:14},{wch:7},{wch:15},{wch:18},{wch:18},{wch:14},{wch:14},{wch:15},{wch:14},{wch:14}];
+    const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Simulações IBS-CBS');
+    XLSX.writeFile(wb, `simulacoes_ibs_cbs_${new Date().toISOString().slice(0,10)}.xlsx`);
+    toast('Excel gerado');
+  }catch(e){ toast('Erro ao exportar Excel: '+e.message, true); }
+}
+
+async function _ensurePDF(){
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js');
+  return window.jspdf.jsPDF;
+}
+async function pdfSim(id){
+  const o=_simOps.find(x=>x.id===id); if(!o) return;
+  try{
+    const jsPDF=await _ensurePDF(); const doc=new jsPDF();
+    doc.setFontSize(16); doc.setTextColor(30,60,90); doc.text('Simulação IBS/CBS', 14, 20);
+    doc.setFontSize(10); doc.setTextColor(90);
+    doc.text(o.descricao||'—', 14, 28);
+    doc.text(`${o.tipo_bem} · ${TIPO_OP_MAP[o.tipo_operacao]||o.tipo_operacao}${o.residencial?' · residencial':''} · ano ${o.ano} · valor ${fmtMoeda(o.valor)}`, 14, 34);
+    const body=[
+      ['Base de cálculo', fmtMoeda(o.base_calculo)],
+      ['Alíquota IBS efetiva', pctTxt(o.aliq_ibs_efetiva)],
+      ['Alíquota CBS efetiva', pctTxt(o.aliq_cbs_efetiva)],
+      ['IBS', fmtMoeda(o.ibs)],
+      ['CBS', fmtMoeda(o.cbs)],
+      ['Total IBS + CBS', fmtMoeda(o.total_novo)]
+    ];
+    if(o.carga_atual!=null){ body.push(['Carga atual estimada', fmtMoeda(o.carga_atual)]); body.push(['Diferença (novo − atual)', fmtMoeda(o.diferenca)]); }
+    doc.autoTable({ startY:42, head:[['Item','Valor']], body, theme:'grid', headStyles:{fillColor:[30,60,90]}, columnStyles:{1:{halign:'right'}} });
+    doc.setFontSize(8); doc.setTextColor(150);
+    doc.text('Estimativa parametrizável — Reforma Tributária (EC 132/2023, LC 214/2025). Patrimonial Artecon.', 14, doc.internal.pageSize.height-10);
+    doc.save(`simulacao_${(o.descricao||'ibs_cbs').replace(/[^a-z0-9]+/gi,'_').toLowerCase()}.pdf`);
+    toast('PDF gerado');
+  }catch(e){ toast('Erro ao gerar PDF: '+e.message, true); }
+}
+async function pdfSimConsolidado(){
+  if(!_simOps.length){ toast('Nenhuma simulação para exportar.', true); return; }
+  try{
+    const jsPDF=await _ensurePDF(); const doc=new jsPDF('l');
+    doc.setFontSize(15); doc.setTextColor(30,60,90); doc.text('Relatório de Simulações IBS/CBS', 14, 16);
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text(`Gerado em ${new Date().toLocaleDateString('pt-BR')} · Patrimonial Artecon`, 14, 22);
+    const head=[['Descrição','Bem','Operação','Valor','Ano','IBS','CBS','Total IBS+CBS','Carga atual','Diferença']];
+    const body=_simOps.map(o=>[o.descricao||'—', o.tipo_bem, TIPO_OP_MAP[o.tipo_operacao]||o.tipo_operacao, fmtMoeda(o.valor), o.ano||'', fmtMoeda(o.ibs), fmtMoeda(o.cbs), fmtMoeda(o.total_novo), o.carga_atual!=null?fmtMoeda(o.carga_atual):'—', o.diferenca!=null?fmtMoeda(o.diferenca):'—']);
+    const tot=_simOps.reduce((a,o)=>{a.novo+=Number(o.total_novo)||0;a.at+=Number(o.carga_atual)||0;return a;},{novo:0,at:0});
+    body.push([{content:`Total (${_simOps.length})`,colSpan:7,styles:{fontStyle:'bold'}}, {content:fmtMoeda(tot.novo),styles:{fontStyle:'bold'}}, tot.at?fmtMoeda(tot.at):'—', tot.at?fmtMoeda(tot.novo-tot.at):'—']);
+    doc.autoTable({ startY:27, head, body, theme:'striped', headStyles:{fillColor:[30,60,90]}, styles:{fontSize:8}, columnStyles:{3:{halign:'right'},5:{halign:'right'},6:{halign:'right'},7:{halign:'right'},8:{halign:'right'},9:{halign:'right'}} });
+    doc.save(`relatorio_simulacoes_${new Date().toISOString().slice(0,10)}.pdf`);
+    toast('PDF gerado');
+  }catch(e){ toast('Erro ao gerar PDF: '+e.message, true); }
+}
+
 // expõe handlers usados em onclick inline
 window.formEmpresa=formEmpresa; window.toggleEmpresa=toggleEmpresa;
 window.formUsuario=formUsuario; window.formNovoUsuario=formNovoUsuario; window.toggleUsuario=toggleUsuario;
@@ -2680,10 +2754,11 @@ window.formITCMD=formITCMD; window.inativarITCMD=inativarITCMD;
 window.aplicarDoacao=aplicarDoacao; window.addConjuge=addConjuge; window.audDetalhe=audDetalhe;
 window.formParametro=formParametro; window.inativarParametro=inativarParametro;
 window.formSimulacao=formSimulacao; window.inativarOp=inativarOp; window.memoriaSim=memoriaSim; window.projecaoSim=projecaoSim;
+window.pdfSim=pdfSim; window.pdfSimConsolidado=pdfSimConsolidado; window.exportarSimExcel=exportarSimExcel;
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.18a (Fase 9: Motor de Simulações IBS/CBS)');
+console.log('Patrimonial Artecon — app-shell · build 2026.18b (Simulações: relatórios PDF e Excel)');
 </script>
 </body>
 </html>
