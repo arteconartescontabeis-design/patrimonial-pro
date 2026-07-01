@@ -1517,7 +1517,7 @@ function chipPrazo(d){ const n=diasPara(d); if(n==null) return '—';
 
 async function telaVencimentos(){
   const c=$('#content');
-  c.innerHTML=`<div class="page-head"><div><h1>Vencimentos</h1><p>Prazos e obrigações consolidados — inclui automaticamente os vencimentos de ônus e de documentos (GED).</p></div>
+  c.innerHTML=`<div class="page-head"><div><h1>Vencimentos</h1><p>Prazos e obrigações consolidados — inclui automaticamente ônus, documentos (GED), seguros e procurações.</p></div>
     <button class="btn btn-primary" data-perm="vencimentos:criar" id="novoVenc">+ Novo vencimento</button></div>
     <div class="card" id="vencKpis"></div>
     <div class="toolbar" style="margin-top:18px">
