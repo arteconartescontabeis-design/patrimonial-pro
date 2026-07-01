@@ -206,7 +206,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="field"><label>E-mail</label><input id="loginEmail" type="email" placeholder="voce@artecon.cnt.br" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="loginSenha" type="password" placeholder="••••••••" autocomplete="current-password"></div>
       <button class="btn btn-primary" id="btnLogin">Entrar</button>
-      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.20a</p>
+      <p style="text-align:center;color:var(--texto-3);font-size:11px;margin-top:18px;letter-spacing:.3px">build 2026.21a</p>
     </div>
   </div>
 </div>
@@ -248,6 +248,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 
       <div class="nav-label" style="margin-top:14px">Painéis</div>
       <button class="nav-item" data-route="bi" data-modulo="bi"><span class="ic">&#128200;</span> BI / Relatórios</button>
+      <button class="nav-item" data-route="relatorios" data-modulo="relatorios"><span class="ic">&#128209;</span> Relatórios Fiscais</button>
       <button class="nav-item" data-route="simulacoes" data-modulo="simulacoes"><span class="ic">&#129518;</span> Simulações IBS/CBS</button>
 
       <div class="nav-label" style="margin-top:14px">Administração</div>
@@ -279,7 +280,7 @@ const MODULOS = [
   ['patrimonio','Patrimônio'],['pessoas','Pessoas e Partes'],['societario','Estrutura Societária'],
   ['onus','Ônus e Direitos Reais'],['ged','Gestão Documental'],['seguros','Seguros e Apólices'],['procuracoes','Procurações'],['vencimentos','Vencimentos'],
   ['sucessorio','Planejamento Sucessório'],['tributario','Motor Tributário'],['simulacoes','Motor de Simulações'],['bi','BI / Relatórios'],
-  ['portal','Portal do Sócio'],['contratos','Contratos e Passivos'],['admin','Administração']
+  ['relatorios','Relatórios Fiscais'],['portal','Portal do Sócio'],['contratos','Contratos e Passivos'],['admin','Administração']
 ];
 
 // Tipos de usuário (papel) — rótulos amigáveis
@@ -298,6 +299,19 @@ const TIPO_ATIVO = { imovel:'Imóvel', veiculo:'Veículo', participacao:'Partici
 const ESTADO_CIVIL = [['solteiro','Solteiro(a)'],['casado','Casado(a)'],['uniao_estavel','União estável'],['divorciado','Divorciado(a)'],['viuvo','Viúvo(a)'],['separado','Separado(a)']];
 const REGIME_BENS = [['comunhao_parcial','Comunhão parcial'],['comunhao_universal','Comunhão universal'],['separacao_total','Separação total'],['separacao_obrigatoria','Separação obrigatória'],['participacao_final','Participação final nos aquestos'],['nao_se_aplica','Não se aplica']];
 const SITUACAO_ATIVO = [['ativo','Ativo'],['alienado','Alienado'],['baixado','Baixado'],['onerado','Onerado']];
+
+// Códigos de Bens e Direitos do IRPF (subconjunto usual — confira a tabela do ano na declaração)
+const CODIGOS_IRPF = [
+  ['01 · Bens Imóveis', [['01.01','Prédio residencial'],['01.02','Prédio comercial'],['01.03','Galpão'],['01.11','Apartamento'],['01.12','Casa'],['01.13','Terreno'],['01.14','Terra nua'],['01.15','Sala ou conjunto'],['01.16','Construção'],['01.18','Loja'],['01.99','Outros bens imóveis']]],
+  ['02 · Bens Móveis', [['02.01','Veículo automotor terrestre'],['02.02','Aeronave'],['02.03','Embarcação'],['02.04','Bem relacionado à atividade'],['02.05','Linha telefônica'],['02.06','Joia, obra de arte, antiguidade'],['02.99','Outros bens móveis']]],
+  ['03 · Participações Societárias', [['03.01','Ações (inclusive bolsa)'],['03.02','Quotas ou quinhões de capital'],['03.99','Outras participações societárias']]],
+  ['04 · Aplicações e Investimentos', [['04.01','Depósito em conta poupança'],['04.02','Títulos públicos/privados (CDB, RDB, Tesouro)'],['04.03','Fundos de investimento'],['04.04','VGBL'],['04.99','Outras aplicações e investimentos']]],
+  ['99 · Outros Bens e Direitos', [['99.01','Ativo digital / criptoativo'],['99.99','Outros bens e direitos']]]
+];
+const CODIGO_IRPF_DEFAULT = { imovel:'01.99', veiculo:'02.01', participacao:'03.02', aplicacao:'04.99', outro:'99.99' };
+const CODIGO_IRPF_NOME = {}; CODIGOS_IRPF.forEach(([g,arr])=>arr.forEach(([c,n])=>CODIGO_IRPF_NOME[c]=n));
+function irpfGrupo(cod){ return cod ? String(cod).split('.')[0] : ''; }
+function optCodigosIRPF(sel){ return CODIGOS_IRPF.map(([g,arr])=>`<optgroup label="${g}">`+arr.map(([c,n])=>`<option value="${c}" ${sel===c?'selected':''}>${c} — ${n}</option>`).join('')+`</optgroup>`).join(''); }
 const TIPO_ONUS = [['hipoteca','Hipoteca'],['alienacao_fiduciaria','Alienação fiduciária'],['penhor','Penhor'],['anticrese','Anticrese'],['usufruto','Usufruto'],['uso','Uso'],['habitacao','Habitação'],['servidao','Servidão'],['superficie','Superfície'],['penhora','Penhora'],['arresto','Arresto'],['sequestro','Sequestro'],['promessa_cv','Promessa de compra e venda'],['inalienabilidade','Cláusula de inalienabilidade'],['impenhorabilidade','Cláusula de impenhorabilidade'],['incomunicabilidade','Cláusula de incomunicabilidade'],['reversao','Cláusula de reversão'],['outro','Outro']];
 const TIPO_ONUS_MAP = Object.fromEntries(TIPO_ONUS);
 const SITUACAO_ONUS = [['ativo','Ativo'],['baixado','Baixado'],['em_execucao','Em execução'],['suspenso','Suspenso']];
@@ -329,7 +343,7 @@ function podeAdmin(){ return ctx.superadmin || ctx.role === 'admin'; }
 
 // ---------- Permissões (camada de aplicação; espelha pat_pode() no banco) ----------
 // rota -> módulo. Administração exige admin; demais telas usam a matriz.
-const ROUTE_MOD = { inicio:'inicio', empresas:'admin', usuarios:'admin', acessos:'admin', auditoria:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', analise:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', seguros:'seguros', procuracoes:'procuracoes', sucessorio:'sucessorio', simulacoes:'simulacoes', bi:'bi' };
+const ROUTE_MOD = { inicio:'inicio', empresas:'admin', usuarios:'admin', acessos:'admin', auditoria:'admin', pessoas:'pessoas', ativos:'patrimonio', societario:'societario', analise:'societario', onus:'onus', vencimentos:'vencimentos', ged:'ged', seguros:'seguros', procuracoes:'procuracoes', sucessorio:'sucessorio', simulacoes:'simulacoes', bi:'bi', relatorios:'relatorios' };
 
 async function carregarPermissoes(tenantId){
   ctx.perms = {};
@@ -507,6 +521,7 @@ function rota(){
   else if(r==='procuracoes') telaProcuracoes();
   else if(r==='sucessorio') telaSucessorio();
   else if(r==='bi') telaBI();
+  else if(r==='relatorios') telaRelatorios();
   else if(r==='simulacoes') telaSimulacoes();
   else semAcesso();
 }
@@ -1073,6 +1088,7 @@ function formAtivo(id){
           ${SITUACAO_ATIVO.map(([v,l])=>`<option value="${v}" ${(a.situacao||'ativo')===v?'selected':''}>${l}</option>`).join('')}</select></div>
       </div>
       <div class="field"><label>Descrição *</label><input id="a_desc" value="${esc(a.descricao)}"></div>
+      <div class="field"><label>Código do bem (IRPF)</label><select id="a_cod">${optCodigosIRPF(a.codigo_irpf||CODIGO_IRPF_DEFAULT[tipo]||'99.99')}</select><div class="hint">Sugerido pelo tipo — confira conforme a natureza do bem (casa × terreno × apto). Usado na Ficha de Bens do IRPF em Relatórios Fiscais.</div></div>
       <div class="grid2">
         <div class="field"><label>Proprietário</label><select id="a_prop"><option value="">—</option>
           ${_pessoasParaSelect.map(x=>`<option value="${x.id}" ${a.proprietario_id===x.id?'selected':''}>${esc(x.nome)} (${esc(x.tipo_pessoa)})</option>`).join('')}</select><div class="hint">Define a quem o bem pertence — necessário para doar este ativo no Planejamento Sucessório.</div></div>
@@ -1115,7 +1131,10 @@ function formAtivo(id){
     await inativarAtivo(a.id, false); closeModal();
   });
 
-  $('#a_tipo').onchange = ()=>{ $('#a_detalhes').innerHTML = detalhesCampos($('#a_tipo').value, {}); };
+  $('#a_tipo').onchange = ()=>{
+    $('#a_detalhes').innerHTML = detalhesCampos($('#a_tipo').value, {});
+    const sel=$('#a_cod'); if(sel) sel.value = CODIGO_IRPF_DEFAULT[$('#a_tipo').value]||'99.99';
+  };
 
   $('#salvarAtivo').onclick = async ()=>{
     const t=$('#a_tipo').value;
@@ -1127,6 +1146,7 @@ function formAtivo(id){
     }
     const payload={
       tenant_id: ctx.tenantId, tipo_ativo:t, descricao:desc,
+      codigo_irpf: $('#a_cod').value||null,
       proprietario_id: $('#a_prop').value||null,
       documento: $('#a_doc').value.trim()||null,
       valor_aquisicao: num($('#a_vaq').value),
@@ -2179,6 +2199,162 @@ async function inativarProcuracao(id, ativo){
 }
 
 // ============================================================
+// 2.8 RELATÓRIOS FISCAIS (módulo 'relatorios')
+//   Ficha de Bens e Direitos (IRPF) + relatório patrimonial, por pessoa.
+// ============================================================
+let _relPessoas=[], _relAtivos=[], _fichaCtx=null;
+
+async function telaRelatorios(){
+  const c=$('#content');
+  const anoAtual=new Date().getFullYear();
+  c.innerHTML=`<div class="page-head"><div><h1>Relatórios Fiscais</h1><p>Ficha de Bens e Direitos (IRPF) e relatório patrimonial por proprietário. Situação em 31/12 = custo de aquisição.</p></div></div>
+    <div class="card" style="padding:18px">
+      <div class="grid2">
+        <div class="field"><label>Proprietário</label><select id="rel_pes"><option value="">—</option></select></div>
+        <div class="field"><label>Ano-base</label><select id="rel_ano">${[anoAtual,anoAtual-1,anoAtual-2,anoAtual-3].map(y=>`<option value="${y}">${y}</option>`).join('')}</select></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        <button class="btn btn-primary" id="rel_gerar">Gerar</button>
+        <button class="btn btn-ghost" id="rel_pdf" style="display:none">Ficha em PDF</button>
+        <button class="btn btn-ghost" id="rel_xls" style="display:none">Ficha em Excel</button>
+        <button class="btn btn-ghost" id="rel_patr" style="display:none">Relatório patrimonial (PDF)</button>
+      </div>
+    </div>
+    <div id="relBody" style="margin-top:18px"></div>`;
+  const [{data:pes},{data:atv}] = await Promise.all([
+    sb.from('pat_pessoas').select('id,nome,tipo_pessoa,documento,ativo').eq('tenant_id',ctx.tenantId).order('nome'),
+    sb.from('pat_ativos').select('*').eq('tenant_id',ctx.tenantId).eq('ativo',true)
+  ]);
+  _relPessoas=(pes||[]).filter(p=>p.ativo!==false);
+  _relAtivos=atv||[];
+  // só proprietários que têm ao menos um ativo
+  const comAtivo=new Set(_relAtivos.map(a=>a.proprietario_id).filter(Boolean));
+  const lista=_relPessoas.filter(p=>comAtivo.has(p.id));
+  $('#rel_pes').innerHTML='<option value="">—</option>'+lista.map(p=>`<option value="${p.id}">${esc(p.nome)} (${esc(p.tipo_pessoa)})</option>`).join('');
+  if(!lista.length) $('#relBody').innerHTML=`<div class="card"><div class="empty"><b>Nenhum proprietário com bens</b>Vincule ativos a pessoas em Patrimônio → Ativos (campo Proprietário) para gerar a Ficha.</div></div>`;
+  $('#rel_gerar').onclick=gerarFicha;
+  $('#rel_pdf').onclick=fichaPDF;
+  $('#rel_xls').onclick=fichaExcel;
+  $('#rel_patr').onclick=relatorioPatrimonialPDF;
+}
+
+function _discriminacaoBem(a){
+  const p=[]; if(a.descricao) p.push(a.descricao);
+  if(a.documento) p.push('Reg./Doc.: '+a.documento);
+  const d=a.detalhes||{};
+  if(a.tipo_ativo==='imovel'){ if(d.endereco)p.push(d.endereco); if(d.area_m2)p.push('Área '+d.area_m2+' m²'); if(d.cartorio)p.push('Cartório: '+d.cartorio); if(d.inscricao_municipal)p.push('Insc. mun.: '+d.inscricao_municipal); }
+  if(a.tipo_ativo==='veiculo'){ if(d.marca_modelo)p.push(d.marca_modelo); if(d.ano)p.push('Ano '+d.ano); if(d.renavam)p.push('RENAVAM '+d.renavam); }
+  if(a.tipo_ativo==='participacao'){ if(d.empresa)p.push(d.empresa); if(d.percentual)p.push(d.percentual+'% do capital'); if(d.quantidade)p.push(d.quantidade+' quotas'); }
+  if(a.tipo_ativo==='aplicacao'){ if(d.instituicao)p.push(d.instituicao); if(d.tipo_aplicacao)p.push(d.tipo_aplicacao); if(d.conta)p.push('Conta '+d.conta); }
+  if(a.data_aquisicao)p.push('Aquisição em '+fmtData(a.data_aquisicao));
+  return p.join('. ');
+}
+
+function gerarFicha(){
+  const pid=$('#rel_pes').value; const ano=+$('#rel_ano').value;
+  if(!pid){ toast('Selecione o proprietário.', true); return; }
+  const pessoa=_relPessoas.find(p=>p.id===pid);
+  // bens do proprietário adquiridos até o ano-base (ou sem data informada)
+  const bens=_relAtivos.filter(a=>{
+    if(a.proprietario_id!==pid) return false;
+    const ay=a.data_aquisicao?+String(a.data_aquisicao).slice(0,4):null;
+    return ay==null || ay<=ano;
+  });
+  const btns=['rel_pdf','rel_xls','rel_patr'];
+  if(!bens.length){ $('#relBody').innerHTML=`<div class="card"><div class="empty"><b>Sem bens no ano-base</b>Esta pessoa não possui ativos adquiridos até 31/12/${ano}.</div></div>`; btns.forEach(id=>$('#'+id).style.display='none'); _fichaCtx=null; return; }
+  const itens=bens.map(a=>{
+    const codigo=a.codigo_irpf||CODIGO_IRPF_DEFAULT[a.tipo_ativo]||'99.99';
+    const custo=Number(a.valor_aquisicao)||0;
+    const ay=a.data_aquisicao?+String(a.data_aquisicao).slice(0,4):null;
+    const sit_ant=(ay==null||ay<=(ano-1))?custo:0;   // constava em 31/12 do ano anterior?
+    return { grupo:irpfGrupo(codigo), codigo, codnome:CODIGO_IRPF_NOME[codigo]||'',
+      discriminacao:_discriminacaoBem(a), sit_ant, sit_atual:custo, custo, mercado:Number(a.valor_atual)||0 };
+  }).sort((x,y)=>x.codigo.localeCompare(y.codigo));
+  const totAnt=itens.reduce((s,i)=>s+i.sit_ant,0);
+  const totCusto=itens.reduce((s,i)=>s+i.sit_atual,0);
+  const totMercado=itens.reduce((s,i)=>s+i.mercado,0);
+  _fichaCtx={pessoa,ano,itens,totAnt,totCusto,totMercado};
+  $('#relBody').innerHTML=`
+    <div class="card" style="padding:16px;margin-bottom:14px">
+      <b style="font-family:'Playfair Display',serif;color:var(--azul-esc);font-size:15px">Ficha de Bens e Direitos — ${esc(pessoa.nome)}</b>
+      <div class="hint">CPF/CNPJ: ${esc(pessoa.documento)||'—'} · Ano-base ${ano} · Situação em 31/12 informada pelo custo de aquisição</div>
+    </div>
+    <div class="card"><table><thead><tr><th>Grupo</th><th>Cód.</th><th>Discriminação</th><th class="num">Situação 31/12/${ano-1}</th><th class="num">Situação 31/12/${ano}</th></tr></thead><tbody>
+      ${itens.map(i=>`<tr><td>${i.grupo}</td><td>${i.codigo}</td><td>${esc(i.discriminacao)}<div class="hint">${esc(i.codnome)}</div></td><td class="num">${i.sit_ant?fmtMoeda(i.sit_ant):'—'}</td><td class="num">${fmtMoeda(i.sit_atual)}</td></tr>`).join('')}
+      <tr style="font-weight:700;background:rgba(30,60,90,.06)"><td colspan="3">Total</td><td class="num">${fmtMoeda(totAnt)}</td><td class="num">${fmtMoeda(totCusto)}</td></tr>
+    </tbody></table></div>
+    <div class="card" style="padding:16px;margin-top:14px"><div class="kpis">
+      <div class="kpi"><div class="lab">Total a custo</div><div class="val">${fmtMoeda(totCusto)}</div></div>
+      <div class="kpi"><div class="lab">Total a mercado</div><div class="val">${fmtMoeda(totMercado)}</div></div>
+      <div class="kpi"><div class="lab">Ganho não realizado</div><div class="val accent">${fmtMoeda(totMercado-totCusto)}</div></div>
+    </div><div class="hint" style="margin-top:8px">Ganho não realizado = mercado − custo: base potencial de ganho de capital (IR 15%–22,5%) na alienação, e referência para ITCMD se a transmissão for a valor de mercado. Bens alienados/baixados devem ser refletidos manualmente.</div></div>`;
+  btns.forEach(id=>$('#'+id).style.display='inline-flex');
+}
+
+async function fichaPDF(){
+  if(!_fichaCtx){ toast('Gere a ficha primeiro.', true); return; }
+  try{
+    const jsPDF=await _ensurePDF(); const doc=new jsPDF();
+    const {pessoa,ano,itens,totAnt,totCusto}=_fichaCtx;
+    doc.setFontSize(15); doc.setTextColor(30,60,90); doc.text('Ficha de Bens e Direitos — IRPF', 14, 18);
+    doc.setFontSize(10); doc.setTextColor(90);
+    doc.text(`${pessoa.nome}   ·   CPF/CNPJ: ${pessoa.documento||'—'}`, 14, 26);
+    doc.text(`Ano-base ${ano}   ·   Situação em 31/12 = custo de aquisição`, 14, 31);
+    doc.autoTable({ startY:37,
+      head:[['Grupo','Cód.','Discriminação',`31/12/${ano-1}`,`31/12/${ano}`]],
+      body:itens.map(i=>[i.grupo,i.codigo,i.discriminacao,(i.sit_ant?fmtMoeda(i.sit_ant):'—'),fmtMoeda(i.sit_atual)]),
+      foot:[['','','Total',fmtMoeda(totAnt),fmtMoeda(totCusto)]],
+      styles:{fontSize:8,cellPadding:2,valign:'top'}, headStyles:{fillColor:[30,60,90]},
+      footStyles:{fillColor:[235,238,242],textColor:20,fontStyle:'bold'},
+      columnStyles:{0:{cellWidth:14},1:{cellWidth:14},3:{halign:'right',cellWidth:30},4:{halign:'right',cellWidth:30}} });
+    doc.save(`ficha_bens_${(pessoa.nome||'pessoa').replace(/\s+/g,'_')}_${ano}.pdf`);
+    toast('PDF gerado');
+  }catch(e){ toast('Erro no PDF: '+e.message, true); }
+}
+
+async function fichaExcel(){
+  if(!_fichaCtx){ toast('Gere a ficha primeiro.', true); return; }
+  try{
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+    const {pessoa,ano,itens}=_fichaCtx;
+    const rows=itens.map(i=>({ Grupo:i.grupo, 'Código':i.codigo, 'Descrição do código':i.codnome, 'Discriminação':i.discriminacao,
+      [`Situação 31/12/${ano-1}`]:i.sit_ant, [`Situação 31/12/${ano}`]:i.sit_atual }));
+    const ws=XLSX.utils.json_to_sheet(rows); ws['!cols']=[{wch:8},{wch:8},{wch:28},{wch:60},{wch:18},{wch:18}];
+    const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Ficha de Bens');
+    XLSX.writeFile(wb, `ficha_bens_${(pessoa.nome||'pessoa').replace(/\s+/g,'_')}_${ano}.xlsx`);
+    toast('Excel gerado');
+  }catch(e){ toast('Erro no Excel: '+e.message, true); }
+}
+
+async function relatorioPatrimonialPDF(){
+  if(!_fichaCtx){ toast('Gere a ficha primeiro.', true); return; }
+  try{
+    const jsPDF=await _ensurePDF(); const doc=new jsPDF();
+    const {pessoa,ano,itens,totCusto,totMercado}=_fichaCtx;
+    doc.setFontSize(15); doc.setTextColor(30,60,90); doc.text('Relatório Patrimonial', 14, 18);
+    doc.setFontSize(10); doc.setTextColor(90);
+    doc.text(`${pessoa.nome}   ·   CPF/CNPJ: ${pessoa.documento||'—'}   ·   Posição em ${ano}`, 14, 26);
+    const porGrupo={}; itens.forEach(i=>{ porGrupo[i.grupo]=porGrupo[i.grupo]||{custo:0,mercado:0,n:0}; porGrupo[i.grupo].custo+=i.custo; porGrupo[i.grupo].mercado+=i.mercado; porGrupo[i.grupo].n++; });
+    doc.autoTable({ startY:33,
+      head:[['Grupo','Qtd','Custo','Mercado','Ganho não realizado']],
+      body:Object.entries(porGrupo).sort((a,b)=>a[0].localeCompare(b[0])).map(([g,v])=>[g,v.n,fmtMoeda(v.custo),fmtMoeda(v.mercado),fmtMoeda(v.mercado-v.custo)]),
+      foot:[['Total',itens.length,fmtMoeda(totCusto),fmtMoeda(totMercado),fmtMoeda(totMercado-totCusto)]],
+      styles:{fontSize:9,cellPadding:2.5}, headStyles:{fillColor:[30,60,90]},
+      footStyles:{fillColor:[235,238,242],textColor:20,fontStyle:'bold'},
+      columnStyles:{2:{halign:'right'},3:{halign:'right'},4:{halign:'right'}} });
+    let y=(doc.lastAutoTable?.finalY||60)+8;
+    doc.setFontSize(11); doc.setTextColor(30,60,90); doc.text('Relação de bens', 14, y);
+    doc.autoTable({ startY:y+3,
+      head:[['Cód.','Discriminação','Custo','Mercado']],
+      body:itens.map(i=>[i.codigo,i.discriminacao,fmtMoeda(i.custo),fmtMoeda(i.mercado)]),
+      styles:{fontSize:8,cellPadding:2,valign:'top'}, headStyles:{fillColor:[70,90,110]},
+      columnStyles:{0:{cellWidth:14},2:{halign:'right',cellWidth:28},3:{halign:'right',cellWidth:28}} });
+    doc.save(`relatorio_patrimonial_${(pessoa.nome||'pessoa').replace(/\s+/g,'_')}_${ano}.pdf`);
+    toast('PDF gerado');
+  }catch(e){ toast('Erro no PDF: '+e.message, true); }
+}
+
+// ============================================================
 // 2.0 INÍCIO  (dashboard multi-empresa — sempre acessível)
 // ============================================================
 async function telaInicio(){
@@ -3146,7 +3322,7 @@ window.pdfSim=pdfSim; window.pdfSimConsolidado=pdfSimConsolidado; window.exporta
 window.closeModal=closeModal;
 
 // build version
-console.log('Patrimonial Artecon — app-shell · build 2026.20a (Seguros e Procurações + integração ao motor de vencimento)');
+console.log('Patrimonial Artecon — app-shell · build 2026.21a (Relatórios Fiscais: Ficha de Bens IRPF + relatório patrimonial PDF-Excel + código IRPF no ativo)');
 </script>
 </body>
 </html>
