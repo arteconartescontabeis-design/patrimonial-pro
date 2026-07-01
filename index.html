@@ -1560,6 +1560,12 @@ async function telaVencimentos(){
   const { data: prc } = await sb.from('pat_procuracoes')
     .select('id,outorgado_nome,outorgado_id,data_validade,situacao')
     .eq('tenant_id', ctx.tenantId).eq('ativo', true).not('data_validade','is',null);
+  // pessoas (para resolver nome do outorgado, independente de ter aberto a tela Procurações)
+  const pesMap={};
+  if((prc||[]).some(p=>p.outorgado_id)){
+    const { data: pes } = await sb.from('pat_pessoas').select('id,nome').eq('tenant_id', ctx.tenantId);
+    (pes||[]).forEach(x=>pesMap[x.id]=x.nome);
+  }
 
   const linhasManuais = _vencCache.map(v=>({
     source:'manual', id:v.id, titulo:v.titulo, categoria:CATEGORIA_VENC_MAP[v.categoria]||v.categoria,
@@ -1585,12 +1591,15 @@ async function telaVencimentos(){
     statusTxt: SIT_SEGURO_MAP[s.situacao]||s.situacao||(diasPara(s.vigencia_fim)<0?'Vencida':'Vigente'),
     aberto: s.situacao!=='cancelada'
   }));
-  const linhasProc = (prc||[]).map(p=>({
-    source:'proc', id:p.id, titulo:'Procuração'+((p.outorgado_nome||(_procPessoasMap&&_procPessoasMap[p.outorgado_id]))?` · ${p.outorgado_nome||_procPessoasMap[p.outorgado_id]}`:''), categoria:'Procuração',
-    vinculo:'Procurações', data:p.data_validade, valor:null,
-    statusTxt: SIT_PROC_MAP[p.situacao]||p.situacao||(diasPara(p.data_validade)<0?'Vencida':'Vigente'),
-    aberto: p.situacao!=='revogada'
-  }));
+  const linhasProc = (prc||[]).map(p=>{
+    const outNome = p.outorgado_nome || pesMap[p.outorgado_id] || '';
+    return {
+      source:'proc', id:p.id, titulo:'Procuração'+(outNome?` · ${outNome}`:''), categoria:'Procuração',
+      vinculo:'Procurações', data:p.data_validade, valor:null,
+      statusTxt: SIT_PROC_MAP[p.situacao]||p.situacao||(diasPara(p.data_validade)<0?'Vencida':'Vigente'),
+      aberto: p.situacao!=='revogada'
+    };
+  });
   _vencRows = [...linhasManuais, ...linhasOnus, ...linhasDoc, ...linhasSeg, ...linhasProc].sort((a,b)=>String(a.data).localeCompare(String(b.data)));
 
   renderKpisVenc();
